@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% set active = "db" %}
+{% block title %}База данных — Webhook Receiver{% endblock %}
+{% block content %}
+<h1>🗄️ Настройки базы данных</h1>
+
+{% if db.host %}
+    {% if db_ok %}
+        <div class="alert alert-success">✅ Подключение установлено</div>
+    {% else %}
+        <div class="alert alert-error">❌ Ошибка: {{ db_msg }}</div>
+    {% endif %}
+{% endif %}
+
+<div class="card">
+    <div class="card-title">Параметры подключения к WordPress MySQL</div>
+    <form method="POST" action="/db-settings">
+        <div class="form-row">
+            <label>Хост</label>
+            <input type="text" name="host" value="{{ db.host }}" placeholder="localhost или IP">
+        </div>
+        <div class="form-row">
+            <label>Порт</label>
+            <input type="number" name="port" value="{{ db.port }}" placeholder="3306">
+        </div>
+        <div class="form-row">
+            <label>Пользователь</label>
+            <input type="text" name="user" value="{{ db.user }}" placeholder="wp_user">
+        </div>
+        <div class="form-row">
+            <label>Пароль</label>
+            <input type="password" name="password" value="{{ db.password }}" placeholder="••••••">
+        </div>
+        <div class="form-row">
+            <label>База данных</label>
+            <input type="text" name="database" value="{{ db.database }}" placeholder="wordpress">
+        </div>
+        <div class="form-row">
+            <label>Префикс таблиц</label>
+            <input type="text" name="table_prefix" value="{{ db.table_prefix }}" placeholder="wp_">
+        </div>
+        <div class="form-row" style="margin-top: 20px;">
+            <label></label>
+            <button type="submit" class="btn btn-primary">💾 Сохранить</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-title">Важно</div>
+    <p class="text-muted">
+        Микросервис подключается к той же MySQL базе, где работает WordPress.
+        Он пишет в таблицы <code>cashback_webhooks</code>, <code>cashback_transactions</code>
+        и <code>cashback_unregistered_transactions</code>.
+        Префикс таблиц должен совпадать с WordPress (обычно <code>wp_</code>).
+    </p>
+    <p class="text-muted mt-2">
+        Также читается таблица <code>cashback_affiliate_networks</code> для импорта сетей
+        и <code>wp_users</code> для проверки регистрации пользователей.
+    </p>
+</div>
+{% endblock %}

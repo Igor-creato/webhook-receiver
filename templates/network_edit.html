@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% set active = "networks" %}
+{% block title %}{{ network.name }} — Webhook Receiver{% endblock %}
+{% block content %}
+<div class="flex-between">
+    <h1>✏️ {{ network.name }}</h1>
+    <a href="/networks" class="btn btn-secondary btn-sm">← Назад к списку</a>
+</div>
+
+<!-- Webhook URL -->
+<div class="card">
+    <div class="card-title">🔗 Webhook URL для CPA сети</div>
+    <div class="url-box" id="webhookUrl">{{ webhook_url }}</div>
+    <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('webhookUrl').innerText).then(()=>this.innerText='✅ Скопировано').catch(()=>{})">📋 Копировать</button>
+        <form method="POST" action="/networks/{{ slug }}/regenerate-path" style="display: inline;">
+            <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Старый URL перестанет работать. Продолжить?')">🔄 Сгенерировать новый path</button>
+        </form>
+        <span class="badge {% if network.is_active %}badge-green{% else %}badge-red{% endif %}">
+            {% if network.is_active %}Активна{% else %}Отключена{% endif %}
+        </span>
+    </div>
+    <p class="text-muted mt-2">Этот URL указывается в настройках постбэка CPA-сети. Поддерживает GET и POST.</p>
+</div>
+
+<form method="POST" action="/networks/{{ slug }}/save">
+
+<!-- Basic settings -->
+<div class="card">
+    <div class="card-title">⚙️ Основные настройки</div>
+    <div class="form-row">
+        <label>Название</label>
+        <input type="text" name="name" value="{{ network.name }}">
+    </div>
+    <div class="form-row">
+        <label>Активна</label>
+        <label style="min-width: auto; display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" name="is_active" {% if network.is_active %}checked{% endif %} style="width: auto;">
+            Принимать вебхуки
+        </label>
+    </div>
+    <div class="form-row">
+        <label>Базовый URL сети</label>
+        <input type="text" name="webhook_base_url" value="{{ network.webhook_base_url | default('') }}" placeholder="https://www.admitad.com">
+    </div>
+</div>
+
+<!-- Field Mapping -->
+<div class="card">
+    <div class="card-title">🗺️ Маппинг полей</div>
+    <p class="text-muted mb-1">Левая колонка — имя параметра в нашей системе. Правая — имя параметра в CPA-сети (макрос).</p>
+
+    <div style="display: flex; gap: 20px; margin: 12px 0 6px;">
+        <div style="flex: 1; max-width: 200px;"><strong style="font-size: 12px; color: var(--muted);">Имя параметра</strong></div>
+        <div style="width: 20px;"></div>
+        <div style="flex: 1; max-width: 200px;"><strong style="font-size: 12px; color: var(--muted);">Содержание параметра</strong></div>
+        <div style="width: 30px;"></div>
+    </div>
+
+    <div id="mappingContainer">
+        {% for field, param in (network.mapping or {}).items() %}
+        <div class="mapping-row">
+            <input type="text" name="map_field_{{ loop.index0 }}" value="{{ field }}" placeholder="click_id">
+            <span class="eq">=</span>
+            <input type="text" name="map_param_{{ loop.index0 }}" value="{{ param }}" placeholder="subid1">
+            <button type="button" class="del-btn" onclick="this.parentElement.remove(); reindexMapping();">✕</button>
+        </div>
+        {% endfor %}
+    </div>
+
+    <button type="button" class="btn btn-secondary btn-sm mt-2" onclick="addMappingRow()">
+        ➕ Добавить новый параметр
+    </button>
+</div>
+
+<!-- Status Mapping -->
+<div class="card">
+    <div class="card-title">🔀 Маппинг статусов</div>
+    <p class="text-muted mb-1">Преобразование статуса заказа из CPA-сети в нашу систему (waiting / completed / declined).</p>
+
+    <div id="statusContainer">
+        {% for s_from, s_to in (network.status_mapping or {}).items() %}
+        <div class="mapping-row">
+            <input type="text" name="status_from_{{ loop.index0 }}" value="{{ s_from }}" placeholder="approved">
+            <span class="eq">→</span>
+            <select name="status_to_{{ loop.index0 }}">
+                <option value="waiting" {% if s_to == 'waiting' %}selected{% endif %}>waiting</option>
+                <option value="completed" {% if s_to == 'completed' %}selected{% endif %}>completed</option>
+                <option value="declined" {% if s_to == 'declined' %}selected{% endif %}>declined</option>
+            </select>
+            <button type="button" class="del-btn" onclick="this.parentElement.remove(); reindexStatus();">✕</button>
+        </div>
+        {% endfor %}
+    </div>
+
+    <button type="button" class="btn btn-secondary btn-sm mt-2" onclick="addStatusRow()">
+        ➕ Добавить статус
+    </button>
+</div>
+
+<div style="display: flex; gap: 12px; margin-top: 20px;">
+    <button type="submit" class="btn btn-primary">💾 Сохранить всё</button>
+</div>
+
+</form>
+
+<!-- Delete -->
+<div class="card mt-2" style="border-color: rgba(239,68,68,.3);">
+    <div class="card-title" style="color: var(--red);">⚠️ Опасная зона</div>
+    <form method="POST" action="/networks/{{ slug }}/delete" style="display: inline;">
+        <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Удалить сеть {{ network.name }}? Это действие необратимо.')">🗑️ Удалить сеть</button>
+    </form>
+</div>
+
+<script>
+let mapIdx = {{ (network.mapping or {}) | length }};
+let statusIdx = {{ (network.status_mapping or {}) | length }};
+
+function addMappingRow() {
+    const container = document.getElementById('mappingContainer');
+    const row = document.createElement('div');
+    row.className = 'mapping-row';
+    row.innerHTML = `
+        <input type="text" name="map_field_${mapIdx}" value="" placeholder="field_name">
+        <span class="eq">=</span>
+        <input type="text" name="map_param_${mapIdx}" value="" placeholder="network_param">
+        <button type="button" class="del-btn" onclick="this.parentElement.remove(); reindexMapping();">✕</button>
+    `;
+    container.appendChild(row);
+    mapIdx++;
+    row.querySelector('input').focus();
+}
+
+function addStatusRow() {
+    const container = document.getElementById('statusContainer');
+    const row = document.createElement('div');
+    row.className = 'mapping-row';
+    row.innerHTML = `
+        <input type="text" name="status_from_${statusIdx}" value="" placeholder="network_status">
+        <span class="eq">→</span>
+        <select name="status_to_${statusIdx}">
+            <option value="waiting">waiting</option>
+            <option value="completed">completed</option>
+            <option value="declined">declined</option>
+        </select>
+        <button type="button" class="del-btn" onclick="this.parentElement.remove(); reindexStatus();">✕</button>
+    `;
+    container.appendChild(row);
+    statusIdx++;
+    row.querySelector('input').focus();
+}
+
+function reindexMapping() {
+    const rows = document.querySelectorAll('#mappingContainer .mapping-row');
+    rows.forEach((row, i) => {
+        const inputs = row.querySelectorAll('input');
+        inputs[0].name = `map_field_${i}`;
+        inputs[1].name = `map_param_${i}`;
+    });
+    mapIdx = rows.length;
+}
+
+function reindexStatus() {
+    const rows = document.querySelectorAll('#statusContainer .mapping-row');
+    rows.forEach((row, i) => {
+        row.querySelector('input').name = `status_from_${i}`;
+        row.querySelector('select').name = `status_to_${i}`;
+    });
+    statusIdx = rows.length;
+}
+</script>
+{% endblock %}

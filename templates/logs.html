@@ -1,0 +1,45 @@
+{% extends "base.html" %} {% set active = "logs" %} {% block title %}Логи — Webhook Receiver{%
+endblock %} {% block content %}
+<h1>📋 Логи вебхуков</h1>
+
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-value">{{ stats.queue }}</div>
+    <div class="stat-label">В очереди Redis</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ stats.dlq }}</div>
+    <div class="stat-label">Dead Letter Queue</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Последние 100 вебхуков (из cashback_webhooks)</div>
+  {% if webhooks %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Время</th>
+        <th>Payload (превью)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for wh in webhooks %}
+      <tr>
+        <td>{{ wh.id }}</td>
+        <td>{{ wh.received_at }}</td>
+        <td>
+          <code class="text-muted" style="font-size: 12px; word-break: break-all"
+            >{{ wh.payload_preview | default('') | truncate(150) }}</code
+          >
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">Нет данных. Либо БД не подключена, либо вебхуки ещё не поступали.</p>
+  {% endif %}
+</div>
+{% endblock %}

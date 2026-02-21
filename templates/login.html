@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход — Webhook Receiver</title>
+    <style>
+        :root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e1e4ed; --accent: #6366f1; --red: #ef4444; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .login-box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 40px; width: 380px; }
+        h1 { text-align: center; margin-bottom: 8px; font-size: 20px; }
+        .sub { text-align: center; color: #8b8fa3; font-size: 13px; margin-bottom: 24px; }
+        input { width: 100%; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 8px; font-size: 14px; margin-bottom: 16px; }
+        input:focus { outline: none; border-color: var(--accent); }
+        button { width: 100%; padding: 10px; background: var(--accent); color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+        button:hover { opacity: .9; }
+        .error { color: var(--red); font-size: 13px; text-align: center; margin-bottom: 12px; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h1>🔐 Webhook Receiver</h1>
+        <p class="sub">Введите пароль администратора</p>
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+        <form method="POST" action="/login">
+            <input type="password" name="password" placeholder="Пароль" autofocus required>
+            <button type="submit">Войти</button>
+        </form>
+    </div>
+</body>
+</html>

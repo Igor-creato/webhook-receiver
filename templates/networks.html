@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% set active = "networks" %}
+{% block title %}Сети — Webhook Receiver{% endblock %}
+{% block content %}
+<h1>🌐 CPA Сети</h1>
+
+{% if db_networks %}
+<div class="card">
+    <div class="card-title">Импорт из базы данных (cashback_affiliate_networks)</div>
+    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        {% for net in db_networks %}
+            {% set already = net.slug is defined and net.slug in networks %}
+            <form method="POST" action="/networks/import-from-db" style="display: inline;">
+                <input type="hidden" name="network_id" value="{{ net.id }}">
+                <input type="hidden" name="network_name" value="{{ net.name }}">
+                <input type="hidden" name="network_slug" value="{{ net.slug | default(net.name | lower | replace(' ', '_')) }}">
+                <button type="submit" class="btn {% if already %}btn-secondary{% else %}btn-green{% endif %} btn-sm"
+                    {% if already %}disabled title="Уже добавлена"{% endif %}>
+                    {{ net.name }}{% if already %} ✓{% endif %}
+                </button>
+            </form>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-title">Добавить сеть вручную</div>
+    <form method="POST" action="/networks/add" style="display: flex; gap: 12px; align-items: flex-end;">
+        <div>
+            <label class="text-muted mb-1" style="display: block;">Название</label>
+            <input type="text" name="name" placeholder="Admitad" required>
+        </div>
+        <div>
+            <label class="text-muted mb-1" style="display: block;">Slug (латиница)</label>
+            <input type="text" name="slug" placeholder="admitad" pattern="[a-z0-9_-]+" required>
+        </div>
+        <button type="submit" class="btn btn-primary">➕ Добавить</button>
+    </form>
+</div>
+
+{% if networks %}
+<div class="card">
+    <div class="card-title">Настроенные сети ({{ networks | length }})</div>
+    <table>
+        <thead>
+            <tr><th>Сеть</th><th>Slug</th><th>Маппинг</th><th>Статус</th><th>Действия</th></tr>
+        </thead>
+        <tbody>
+            {% for slug, net in networks.items() %}
+            <tr>
+                <td><strong>{{ net.name }}</strong></td>
+                <td><code>{{ slug }}</code></td>
+                <td><span class="text-muted">{{ net.mapping | length if net.mapping else 0 }} полей</span></td>
+                <td>
+                    {% if net.is_active %}
+                        <span class="badge badge-green">Активна</span>
+                    {% else %}
+                        <span class="badge badge-red">Выкл</span>
+                    {% endif %}
+                </td>
+                <td style="display: flex; gap: 6px;">
+                    <a href="/networks/{{ slug }}" class="btn btn-secondary btn-sm">✏️ Настроить</a>
+                    <form method="POST" action="/networks/{{ slug }}/toggle" style="display: inline;">
+                        <button type="submit" class="btn btn-sm {% if net.is_active %}btn-danger{% else %}btn-green{% endif %}">
+                            {% if net.is_active %}⏸️{% else %}▶️{% endif %}
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card">
+    <p class="text-muted">Нет настроенных сетей. Добавьте первую сеть выше.</p>
+</div>
+{% endif %}
+{% endblock %}

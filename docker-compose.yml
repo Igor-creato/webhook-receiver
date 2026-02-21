@@ -1,0 +1,64 @@
+services:
+  redis:
+    image: redis:8.4-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save 60 1000
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - '8099:8099' # Webhook receiver (public)
+      - '127.0.0.1:8098:8098' # Admin UI (localhost only via SSH)
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CONFIG_PATH=/data/config.json
+      - ADMIN_SECRET=${ADMIN_SECRET:-changeme_on_first_run}
+      - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN}
+      - TZ=Europe/Moscow
+    volumes:
+      - app_data:/data
+    command: >
+      sh -c "
+        python -m uvicorn app.receiver:app --host 0.0.0.0 --port 8099 --workers 4 --log-level warning &
+        python -m uvicorn admin.panel:app --host 0.0.0.0 --port 8098 --workers 1 --log-level info &
+        wait
+      "
+    networks:
+      - proxy
+      - default
+
+  worker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CONFIG_PATH=/data/config.json
+      - WORKER_CONCURRENCY=4
+      - TZ=Europe/Moscow
+    volumes:
+      - app_data:/data
+    command: python -m worker.processor
+    networks:
+      - proxy
+      - default
+networks:
+  proxy:
+    external: true
+
+volumes:
+  redis_data:
+  app_data:

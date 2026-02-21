@@ -1,0 +1,7 @@
+.git
+.env
+*.md
+migration.sql
+__pycache__
+*.pyc
+.mypy_cache

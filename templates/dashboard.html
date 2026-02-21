@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% set active = "dashboard" %}
+{% block title %}Дашборд — Webhook Receiver{% endblock %}
+{% block content %}
+<h1>📊 Дашборд</h1>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value">{% if db_ok %}✅{% else %}❌{% endif %}</div>
+        <div class="stat-label">База данных</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ network_count }}</div>
+        <div class="stat-label">Сетей настроено</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.queue }}</div>
+        <div class="stat-label">В очереди</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.dlq }}</div>
+        <div class="stat-label">DLQ (ошибки)</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">Статус подключения</div>
+    {% if db_ok %}
+        <div class="alert alert-success">Подключение к БД: {{ db_msg }} ({{ db.host }}:{{ db.port }}/{{ db.database }})</div>
+    {% else %}
+        <div class="alert alert-error">{{ db_msg }}</div>
+        <a href="/db-settings" class="btn btn-primary btn-sm mt-2">Настроить подключение</a>
+    {% endif %}
+</div>
+
+{% if networks %}
+<div class="card">
+    <div class="card-title">Настроенные сети</div>
+    <table>
+        <thead>
+            <tr><th>Сеть</th><th>Slug</th><th>Статус</th><th>Действия</th></tr>
+        </thead>
+        <tbody>
+            {% for slug, net in networks.items() %}
+            <tr>
+                <td><strong>{{ net.name }}</strong></td>
+                <td><code>{{ slug }}</code></td>
+                <td>
+                    {% if net.is_active %}
+                        <span class="badge badge-green">Активна</span>
+                    {% else %}
+                        <span class="badge badge-red">Отключена</span>
+                    {% endif %}
+                </td>
+                <td><a href="/networks/{{ slug }}" class="btn btn-secondary btn-sm">Настроить</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}
