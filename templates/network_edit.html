@@ -20,7 +20,7 @@
             {% if network.is_active %}Активна{% else %}Отключена{% endif %}
         </span>
     </div>
-    <p class="text-muted mt-2">Этот URL указывается в настройках постбэка CPA-сети. Поддерживает GET и POST.</p>
+    <p class="text-muted mt-2">Этот URL указывается в настройках постбэка CPA-сети. Поддерживает: <strong id="methodHint">{% if network.webhook_method %}{{ network.webhook_method }}{% else %}не выбрано{% endif %}</strong>.</p>
 </div>
 
 <form method="POST" action="/networks/{{ slug }}/save">
@@ -38,6 +38,16 @@
             <input type="checkbox" name="is_active" {% if network.is_active %}checked{% endif %} style="width: auto;">
             Принимать вебхуки
         </label>
+    </div>
+    <div class="form-row">
+        <label>Метод приёма хуков <span style="color: var(--red);">*</span></label>
+        <select name="webhook_method" id="webhookMethod" required>
+            <option value="" {% if not network.webhook_method %}selected{% endif %} disabled>Выбрать</option>
+            <option value="GET" {% if network.webhook_method == 'GET' %}selected{% endif %}>GET</option>
+            <option value="POST" {% if network.webhook_method == 'POST' %}selected{% endif %}>POST</option>
+            <option value="GET&POST" {% if network.webhook_method == 'GET&POST' %}selected{% endif %}>GET&POST</option>
+        </select>
+        <span id="webhookMethodError" class="field-error" style="display: none; color: var(--red); font-size: 12px; margin-top: 4px;">Выберите метод приёма хуков</span>
     </div>
     <div class="form-row">
         <label>Базовый URL сети</label>
@@ -115,6 +125,28 @@
 <script>
 let mapIdx = {{ (network.mapping or {}) | length }};
 let statusIdx = {{ (network.status_mapping or {}) | length }};
+
+// Webhook method validation & hint
+const methodSelect = document.getElementById('webhookMethod');
+const methodError = document.getElementById('webhookMethodError');
+const methodHint = document.getElementById('methodHint');
+
+methodSelect.addEventListener('change', function() {
+    if (this.value) {
+        methodError.style.display = 'none';
+        methodSelect.style.borderColor = '';
+        methodHint.textContent = this.value;
+    }
+});
+
+document.querySelector('form[action$="/save"]').addEventListener('submit', function(e) {
+    if (!methodSelect.value) {
+        e.preventDefault();
+        methodError.style.display = 'block';
+        methodSelect.style.borderColor = 'var(--red)';
+        methodSelect.focus();
+    }
+});
 
 function addMappingRow() {
     const container = document.getElementById('mappingContainer');

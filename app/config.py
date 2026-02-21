@@ -67,22 +67,52 @@ def get_all_networks() -> dict[str, Any]:
     return load().get("networks", {})
 
 
+# ============================================================
+# Маппинг полей: {"наше_поле_в_БД": "имя_параметра_в_вебхуке"}
+#
+# Логика apply_mapping() в processor.py:
+#   result["наше_поле"] = params["имя_параметра_в_вебхуке"]
+#
+# При настройке постбэка в Admitad (Advanced mode) задавайте
+# имена параметров (левая колонка) РОВНО такими:
+#
+#   click_id     = [[[subid1]]]
+#   user_id      = [[[subid2]]]
+#   uniq_id      = [[[admitad_id]]]
+#   order_number = [[[order_id]]]
+#   offer_id     = [[[offer_id]]]
+#   offer_name   = [[[offer_name]]]
+#   order_status = [[[payment_status]]]
+#   sum_order    = [[[order_sum]]]
+#   comission    = [[[payment_sum]]]
+#   currency     = [[[currency]]]
+#   reward_ready = [[[reward_ready]]]
+#   action_date  = [[[time]]]
+#   click_time   = [[[click_time]]]
+#   website_id   = [[[website_id]]]
+#   action_type  = [[[type]]]
+#
+# Тогда маппинг будет identity (левая = правая), и менять его
+# не нужно. Если CPA-сеть шлёт параметры под другими именами —
+# измените правую часть через админку или в config.json.
+# ============================================================
+
 DEFAULT_MAPPING: dict[str, str] = {
-    "click_id": "subid1",
-    "user_id": "subid2",
-    "uniq_id": "admitad_id",
-    "order_number": "order_id",
+    "click_id": "click_id",
+    "user_id": "user_id",
+    "uniq_id": "uniq_id",
+    "order_number": "order_number",
     "offer_id": "offer_id",
     "offer_name": "offer_name",
-    "order_status": "payment_status",
-    "sum_order": "order_sum",
-    "comission": "payment_sum",
+    "order_status": "order_status",
+    "sum_order": "sum_order",
+    "comission": "comission",
     "currency": "currency",
     "reward_ready": "reward_ready",
-    "action_date": "time",
+    "action_date": "action_date",
     "click_time": "click_time",
     "website_id": "website_id",
-    "action_type": "type",
+    "action_type": "action_type",
 }
 
 DEFAULT_STATUS_MAP: dict[str, str] = {

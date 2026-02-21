@@ -77,6 +77,12 @@ async def _handle_webhook(slug: str, secret: str, request: Request):
     if network.get("secret_path", "") != secret:
         return PlainTextResponse("forbidden", status_code=403)
 
+    # Check allowed HTTP method
+    webhook_method = network.get("webhook_method", "")
+    if webhook_method and webhook_method != "GET&POST":
+        if request.method != webhook_method:
+            return PlainTextResponse("method not allowed", status_code=405)
+
     # Rate limiting
     r = await get_redis()
     rl_key = f"{RATE_LIMIT_PREFIX}{slug}"

@@ -323,6 +323,9 @@ async def network_save(slug: str, request: Request, whk_session: str | None = Co
     # Basic fields
     cfg["networks"][slug]["name"] = form.get("name", slug)
     cfg["networks"][slug]["is_active"] = form.get("is_active") == "on"
+    webhook_method = form.get("webhook_method", "")
+    if webhook_method in ("GET", "POST", "GET&POST"):
+        cfg["networks"][slug]["webhook_method"] = webhook_method
     cfg["networks"][slug]["webhook_base_url"] = form.get("webhook_base_url", "")
 
     # Field mapping
