@@ -15,7 +15,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - '8099:8099' # Webhook receiver (public)
+      #      - '8099:8099' # Webhook receiver (public)
       - '127.0.0.1:8098:8098' # Admin UI (localhost only via SSH)
     depends_on:
       redis:
@@ -28,6 +28,15 @@ services:
       - TZ=Europe/Moscow
     volumes:
       - app_data:/data
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.webhook.entrypoints=websecure
+      - traefik.http.routers.webhook.rule=Host(`${WEBHOOK_DOMAIN}`)
+      - traefik.http.routers.webhook.tls=true
+      - traefik.http.routers.webhook.tls.certresolver=letsencrypt
+      - traefik.http.routers.webhook.service=webhook-svc
+      - traefik.http.services.webhook-svc.loadbalancer.server.port=8099
     command: >
       sh -c "
         python -m uvicorn app.receiver:app --host 0.0.0.0 --port 8099 --workers 4 --log-level warning &

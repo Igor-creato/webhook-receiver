@@ -50,6 +50,11 @@
         <span id="webhookMethodError" class="field-error" style="display: none; color: var(--red); font-size: 12px; margin-top: 4px;">Выберите метод приёма хуков</span>
     </div>
     <div class="form-row">
+        <label>Rate limit</label>
+        <input type="number" name="rate_limit" value="{{ network.rate_limit | default(200) }}" min="0" style="max-width: 120px;">
+        <span class="text-muted" style="font-size: 12px;">запросов/мин (0 = без лимита)</span>
+    </div>
+    <div class="form-row">
         <label>Базовый URL сети</label>
         <input type="text" name="webhook_base_url" value="{{ network.webhook_base_url | default('') }}" placeholder="https://www.admitad.com">
     </div>

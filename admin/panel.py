@@ -247,6 +247,7 @@ async def network_add(
             "slug": slug,
             "secret_path": generate_secret_path(),
             "is_active": True,
+            "rate_limit": 200,
             "mapping": dict(DEFAULT_MAPPING),
             "status_mapping": dict(DEFAULT_STATUS_MAP),
             "field_transforms": {},
@@ -279,6 +280,7 @@ async def network_import(
             "db_network_id": network_id,
             "secret_path": generate_secret_path(),
             "is_active": True,
+            "rate_limit": 200,
             "mapping": dict(DEFAULT_MAPPING),
             "status_mapping": dict(DEFAULT_STATUS_MAP),
             "field_transforms": {},
@@ -329,6 +331,11 @@ async def network_save(slug: str, request: Request, whk_session: str | None = Co
     if webhook_method in ("GET", "POST", "GET&POST"):
         cfg["networks"][slug]["webhook_method"] = webhook_method
     cfg["networks"][slug]["webhook_base_url"] = form.get("webhook_base_url", "")
+
+    try:
+        cfg["networks"][slug]["rate_limit"] = max(0, int(form.get("rate_limit", 200)))
+    except (ValueError, TypeError):
+        cfg["networks"][slug]["rate_limit"] = 200
 
     # Field mapping
     mapping = {}

@@ -21,7 +21,6 @@ logger = logging.getLogger("webhook.receiver")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 QUEUE_KEY = "webhook:queue"
 RATE_LIMIT_PREFIX = "webhook:rl:"
-RATE_LIMIT_MAX = 200  # per network per minute
 
 app = FastAPI(
     title="Webhook Receiver",
@@ -84,14 +83,16 @@ async def _handle_webhook(slug: str, secret: str, request: Request):
             return PlainTextResponse("method not allowed", status_code=405)
 
     # Rate limiting
+    rate_limit = int(network.get("rate_limit", 200))
     r = await get_redis()
-    rl_key = f"{RATE_LIMIT_PREFIX}{slug}"
-    current = await r.incr(rl_key)
-    if current == 1:
-        await r.expire(rl_key, 60)
-    if current > RATE_LIMIT_MAX:
-        logger.warning("Rate limit exceeded for network %s", slug)
-        return PlainTextResponse("rate limited", status_code=429)
+    if rate_limit > 0:
+        rl_key = f"{RATE_LIMIT_PREFIX}{slug}"
+        current = await r.incr(rl_key)
+        if current == 1:
+            await r.expire(rl_key, 60)
+        if current > rate_limit:
+            logger.warning("Rate limit exceeded for network %s", slug)
+            return PlainTextResponse("rate limited", status_code=429)
 
     # Extract parameters
     params: dict[str, Any] = {}
