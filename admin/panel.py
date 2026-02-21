@@ -249,6 +249,7 @@ async def network_add(
             "is_active": True,
             "mapping": dict(DEFAULT_MAPPING),
             "status_mapping": dict(DEFAULT_STATUS_MAP),
+            "field_transforms": {},
         }
         save(cfg)
 
@@ -280,6 +281,7 @@ async def network_import(
             "is_active": True,
             "mapping": dict(DEFAULT_MAPPING),
             "status_mapping": dict(DEFAULT_STATUS_MAP),
+            "field_transforms": {},
         }
         save(cfg)
 
@@ -357,6 +359,19 @@ async def network_save(slug: str, request: Request, whk_session: str | None = Co
 
     if status_map:
         cfg["networks"][slug]["status_mapping"] = status_map
+
+    # Field transforms
+    field_transforms = {}
+    k = 0
+    while True:
+        t_field = form.get(f"transform_field_{k}")
+        t_type = form.get(f"transform_type_{k}")
+        if t_field is None:
+            break
+        if t_field.strip() and t_type.strip():
+            field_transforms[t_field.strip()] = t_type.strip()
+        k += 1
+    cfg["networks"][slug]["field_transforms"] = field_transforms
 
     save(cfg)
     return RedirectResponse(f"/networks/{slug}", status_code=302)

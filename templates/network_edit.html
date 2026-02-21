@@ -108,6 +108,40 @@
     </button>
 </div>
 
+<!-- Field Transforms -->
+<div class="card">
+    <div class="card-title">🔄 Преобразование полей</div>
+    <p class="text-muted mb-1">Укажите поля, значения которых нужно преобразовать. Например, Unix timestamp → дата/время для Admitad.</p>
+
+    <div style="display: flex; gap: 20px; margin: 12px 0 6px;">
+        <div style="flex: 1; max-width: 200px;"><strong style="font-size: 12px; color: var(--muted);">Поле</strong></div>
+        <div style="width: 20px;"></div>
+        <div style="flex: 1; max-width: 200px;"><strong style="font-size: 12px; color: var(--muted);">Тип преобразования</strong></div>
+        <div style="width: 30px;"></div>
+    </div>
+
+    <div id="transformContainer">
+        {% for t_field, t_type in (network.field_transforms or {}).items() %}
+        <div class="mapping-row">
+            <select name="transform_field_{{ loop.index0 }}" style="flex: 1; max-width: 200px;">
+                <option value="">-- выберите поле --</option>
+                <option value="action_date" {% if t_field == 'action_date' %}selected{% endif %}>action_date</option>
+                <option value="click_time" {% if t_field == 'click_time' %}selected{% endif %}>click_time</option>
+            </select>
+            <span class="eq">→</span>
+            <select name="transform_type_{{ loop.index0 }}" style="flex: 1; max-width: 200px;">
+                <option value="unix_timestamp" {% if t_type == 'unix_timestamp' %}selected{% endif %}>Unix timestamp → Дата/время</option>
+            </select>
+            <button type="button" class="del-btn" onclick="this.parentElement.remove(); reindexTransforms();">✕</button>
+        </div>
+        {% endfor %}
+    </div>
+
+    <button type="button" class="btn btn-secondary btn-sm mt-2" onclick="addTransformRow()">
+        ➕ Добавить преобразование
+    </button>
+</div>
+
 <div style="display: flex; gap: 12px; margin-top: 20px;">
     <button type="submit" class="btn btn-primary">💾 Сохранить всё</button>
 </div>
@@ -125,6 +159,7 @@
 <script>
 let mapIdx = {{ (network.mapping or {}) | length }};
 let statusIdx = {{ (network.status_mapping or {}) | length }};
+let transformIdx = {{ (network.field_transforms or {}) | length }};
 
 // Webhook method validation & hint
 const methodSelect = document.getElementById('webhookMethod');
@@ -199,6 +234,36 @@ function reindexStatus() {
         row.querySelector('select').name = `status_to_${i}`;
     });
     statusIdx = rows.length;
+}
+
+function addTransformRow() {
+    const container = document.getElementById('transformContainer');
+    const row = document.createElement('div');
+    row.className = 'mapping-row';
+    row.innerHTML = `
+        <select name="transform_field_${transformIdx}" style="flex: 1; max-width: 200px;">
+            <option value="">-- выберите поле --</option>
+            <option value="action_date">action_date</option>
+            <option value="click_time">click_time</option>
+        </select>
+        <span class="eq">→</span>
+        <select name="transform_type_${transformIdx}" style="flex: 1; max-width: 200px;">
+            <option value="unix_timestamp">Unix timestamp → Дата/время</option>
+        </select>
+        <button type="button" class="del-btn" onclick="this.parentElement.remove(); reindexTransforms();">✕</button>
+    `;
+    container.appendChild(row);
+    transformIdx++;
+}
+
+function reindexTransforms() {
+    const rows = document.querySelectorAll('#transformContainer .mapping-row');
+    rows.forEach((row, i) => {
+        const selects = row.querySelectorAll('select');
+        selects[0].name = `transform_field_${i}`;
+        selects[1].name = `transform_type_${i}`;
+    });
+    transformIdx = rows.length;
 }
 </script>
 {% endblock %}

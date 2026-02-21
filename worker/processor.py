@@ -4,6 +4,7 @@ Consumes webhook messages from Redis queue (BRPOP),
 applies field mapping, writes to MySQL.
 Runs multiple threads for concurrency.
 """
+import datetime
 import json
 import logging
 import os
@@ -62,6 +63,39 @@ def resolve_status(raw_status: str, network_status_map: dict[str, str] | None) -
     return status_map.get(raw_lower, "waiting")
 
 
+def _convert_unix_timestamp(value: Any) -> str:
+    """Convert Unix timestamp (seconds since epoch) to MySQL DATETIME string."""
+    try:
+        ts = float(value)
+        # Valid range: 2000-01-01 to 2100-01-01
+        if ts < 946684800 or ts > 4102444800:
+            return str(value)
+        dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError, OSError):
+        return str(value)
+
+
+def apply_field_transforms(
+    data: dict[str, Any], transforms: dict[str, str]
+) -> dict[str, Any]:
+    """
+    Apply value transformations to mapped fields.
+    transforms: {"field_name": "transform_type"}
+    """
+    if not transforms:
+        return data
+
+    result = dict(data)
+    for field, transform_type in transforms.items():
+        value = result.get(field, "")
+        if not value:
+            continue
+        if transform_type == "unix_timestamp":
+            result[field] = _convert_unix_timestamp(value)
+    return result
+
+
 def process_message(raw_message: str) -> None:
     """Process a single webhook message."""
     try:
@@ -92,6 +126,10 @@ def process_message(raw_message: str) -> None:
 
     # 2. Apply field mapping
     mapped = apply_mapping(params, mapping)
+
+    # 2b. Apply field transforms (e.g. Unix timestamp -> datetime)
+    field_transforms = network.get("field_transforms", {})
+    mapped = apply_field_transforms(mapped, field_transforms)
 
     # 3. Resolve order status
     raw_status = mapped.get("order_status", "waiting")
