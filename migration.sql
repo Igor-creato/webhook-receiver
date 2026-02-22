@@ -26,3 +26,21 @@ INSERT IGNORE INTO `wp_cashback_affiliate_networks` (`name`, `slug`) VALUES
     ('CityAds', 'cityads'),
     ('GdeSlon', 'gdeslon'),
     ('Leads.su', 'leads_su');
+
+-- ============================================================
+-- Migration: Replace payload_norm with payload_hash for dedup
+-- Run this ONCE after upgrading to hash-based deduplication
+-- ============================================================
+
+-- 4. Add stored generated column with SHA-256 hash
+ALTER TABLE `wp_cashback_webhooks`
+    ADD COLUMN `payload_hash` CHAR(64) GENERATED ALWAYS AS (SHA2(JSON_NORMALIZE(`payload`), 256)) STORED AFTER `payload_norm`;
+
+-- 5. Move unique key from payload_norm to payload_hash
+ALTER TABLE `wp_cashback_webhooks`
+    DROP INDEX `uk_payload_norm`,
+    ADD UNIQUE KEY `uk_payload_hash` (`payload_hash`);
+
+-- 6. Drop payload_norm (no longer needed)
+ALTER TABLE `wp_cashback_webhooks`
+    DROP COLUMN `payload_norm`;

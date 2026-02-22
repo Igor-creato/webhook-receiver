@@ -129,7 +129,7 @@ def get_affiliate_networks() -> list[dict[str, Any]]:
 
 # ============================================================
 # cashback_webhooks — raw payload storage
-# Columns: id, payload, payload_norm, network_slug, received_at
+# Columns: id, payload, payload_hash, network_slug, received_at
 # ============================================================
 
 def save_raw_webhook(
@@ -137,8 +137,8 @@ def save_raw_webhook(
 ) -> int | None:
     """
     Insert into cashback_webhooks with deduplication.
-    payload_norm is a VIRTUAL GENERATED column (json_normalize) — DB computes it.
-    UNIQUE KEY on payload_norm handles deduplication via INSERT IGNORE.
+    payload_hash is a STORED GENERATED column (SHA2 of json_normalize) — DB computes it.
+    UNIQUE KEY on payload_hash handles deduplication via INSERT IGNORE.
     Returns row id or None if duplicate.
     Retries on deadlock (MySQL error 1213).
     """
