@@ -17,6 +17,52 @@ from app.config import get_db_config
 logger = logging.getLogger("webhook.db")
 
 _TABLE_PREFIX_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+_COLUMN_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
+
+# Ключ в data dict → имя колонки в БД (только для несовпадений)
+_FIELD_TO_COLUMN: dict[str, str] = {
+    "partner_name": "partner",
+}
+
+# Типы полей для приведения значений
+_FIELD_TYPES: dict[str, str] = {
+    "user_id": "int",
+    "offer_id": "int",
+    "website_id": "int",
+    "sum_order": "decimal",
+    "comission": "decimal",
+}
+
+# Дефолтные значения (если значение пустое/отсутствует)
+_FIELD_DEFAULTS: dict[str, Any] = {
+    "user_id": 0,
+    "order_status": "waiting",
+    "currency": "RUB",
+}
+
+
+def _coerce_value(value: Any, field: str) -> Any:
+    """Привести значение к нужному типу на основе имени поля."""
+    field_type = _FIELD_TYPES.get(field, "str")
+    default = _FIELD_DEFAULTS.get(field)
+
+    if field_type == "int":
+        try:
+            return int(value) if value else (default if default is not None else None)
+        except (ValueError, TypeError):
+            return default if default is not None else None
+
+    if field_type == "decimal":
+        try:
+            return float(value) if value else (default if default is not None else 0.0)
+        except (ValueError, TypeError):
+            return default if default is not None else 0.0
+
+    # str
+    result = str(value).strip() if value else ""
+    if not result and default is not None:
+        return default
+    return result or None
 
 
 def _validate_prefix(prefix: str) -> str:
@@ -159,12 +205,7 @@ def check_user_exists(user_id: int) -> bool:
 def insert_transaction(data: dict[str, Any], registered: bool) -> tuple[bool, str]:
     """
     Insert into cashback_transactions or cashback_unregistered_transactions.
-    
-    Expected keys in data (from mapping):
-        user_id, uniq_id, partner_name, offer_id, offer_name,
-        order_number, order_status, sum_order, comission, currency,
-        reward_ready, action_date, click_time, click_id, website_id,
-        action_type
+    Columns are built dynamically from data keys (driven by network mapping).
     """
     prefix = _prefix()
 
@@ -177,68 +218,30 @@ def insert_transaction(data: dict[str, Any], registered: bool) -> tuple[bool, st
     idemp_src = f"{data.get('uniq_id', '')}_{data.get('partner_name', '')}_{data.get('user_id', '')}"
     idempotency_key = hashlib.sha256(idemp_src.encode("utf-8")).hexdigest()
 
-    # Parse numeric values safely
-    def safe_decimal(val, default=0.0):
-        try:
-            return float(val) if val else default
-        except (ValueError, TypeError):
-            return default
+    # Build columns and values dynamically from data
+    columns: list[str] = []
+    values: list[Any] = []
 
-    def safe_int(val, default=None):
-        try:
-            return int(val) if val else default
-        except (ValueError, TypeError):
-            return default
+    for field, value in data.items():
+        col_name = _FIELD_TO_COLUMN.get(field, field)
+        if not _COLUMN_NAME_RE.match(col_name):
+            logger.warning("Skipping invalid column name: %s", col_name)
+            continue
+        columns.append(f"`{col_name}`")
+        values.append(_coerce_value(value, field))
 
-    def safe_str(val, default=""):
-        return str(val).strip() if val else default
+    # Always add idempotency_key
+    columns.append("`idempotency_key`")
+    values.append(idempotency_key)
 
-    # Parse reward_ready to 0/1
-    rr = safe_str(data.get("reward_ready", "0"))
-    reward_ready = 1 if rr in ("1", "true", "yes") else 0
+    col_list = ", ".join(columns)
+    placeholders = ", ".join(["%s"] * len(columns))
+    sql = f"INSERT INTO `{table}` ({col_list}) VALUES ({placeholders})"
 
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                sql = (
-                    f"INSERT INTO `{table}` ("
-                    f"  `user_id`, `uniq_id`, `partner`, `offer_id`, `offer_name`,"
-                    f"  `order_number`, `order_status`, `sum_order`, `comission`, `currency`,"
-                    f"  `reward_ready`, `action_date`, `click_time`, `click_id`, `website_id`,"
-                    f"  `action_type`, `idempotency_key`"
-                    f") VALUES ("
-                    f"  %s, %s, %s, %s, %s,"
-                    f"  %s, %s, %s, %s, %s,"
-                    f"  %s, %s, %s, %s, %s,"
-                    f"  %s, %s"
-                    f")"
-                )
-
-                # Parse action_date and click_time — Admitad sends "2026-02-21 14:32:07"
-                action_date = safe_str(data.get("action_date")) or None
-                click_time = safe_str(data.get("click_time")) or None
-
-                params = (
-                    safe_int(data.get("user_id"), 0),           # user_id
-                    safe_str(data.get("uniq_id")),               # uniq_id
-                    safe_str(data.get("partner_name")),          # partner
-                    safe_int(data.get("offer_id")),              # offer_id
-                    safe_str(data.get("offer_name")),            # offer_name
-                    safe_str(data.get("order_number")),          # order_number
-                    safe_str(data.get("order_status", "waiting")),  # order_status
-                    safe_decimal(data.get("sum_order")),         # sum_order
-                    safe_decimal(data.get("comission")),         # comission
-                    safe_str(data.get("currency", "RUB")) or "RUB",  # currency
-                    reward_ready,                                 # reward_ready
-                    action_date,                                  # action_date
-                    click_time,                                   # click_time
-                    safe_str(data.get("click_id")),              # click_id
-                    safe_int(data.get("website_id")),            # website_id
-                    safe_str(data.get("action_type")),           # action_type
-                    idempotency_key,                              # idempotency_key
-                )
-
-                cur.execute(sql, params)
+                cur.execute(sql, tuple(values))
                 conn.commit()
                 return True, "OK"
     except pymysql.err.IntegrityError as e:

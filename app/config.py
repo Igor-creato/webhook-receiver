@@ -86,7 +86,6 @@ def get_all_networks() -> dict[str, Any]:
 #   sum_order    = [[[order_sum]]]
 #   comission    = [[[payment_sum]]]
 #   currency     = [[[currency]]]
-#   reward_ready = [[[reward_ready]]]
 #   action_date  = [[[time]]]
 #   click_time   = [[[click_time]]]
 #   website_id   = [[[website_id]]]
@@ -108,7 +107,6 @@ DEFAULT_MAPPING: dict[str, str] = {
     "sum_order": "sum_order",
     "comission": "comission",
     "currency": "currency",
-    "reward_ready": "reward_ready",
     "action_date": "action_date",
     "click_time": "click_time",
     "website_id": "website_id",
