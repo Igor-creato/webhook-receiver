@@ -88,21 +88,21 @@ def get_affiliate_networks() -> list[dict[str, Any]]:
 
 def save_raw_webhook(payload_json: str, network_slug: str) -> int | None:
     """
-    Insert into cashback_webhooks with SHA-256 deduplication.
+    Insert into cashback_webhooks with deduplication.
+    payload_norm is a VIRTUAL GENERATED column (json_normalize) — DB computes it.
     Returns row id or None if duplicate.
     """
     prefix = _prefix()
     table = f"{prefix}cashback_webhooks"
-    payload_norm = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"INSERT IGNORE INTO `{table}` "
-                    f"(`payload`, `payload_norm`, `network_slug`, `received_at`) "
-                    f"VALUES (%s, %s, %s, NOW())",
-                    (payload_json, payload_norm, network_slug),
+                    f"(`payload`, `network_slug`, `received_at`) "
+                    f"VALUES (%s, %s, NOW())",
+                    (payload_json, network_slug),
                 )
                 conn.commit()
                 if cur.rowcount == 0:
