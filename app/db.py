@@ -83,7 +83,7 @@ def get_affiliate_networks() -> list[dict[str, Any]]:
 
 # ============================================================
 # cashback_webhooks — raw payload storage
-# Columns: id, payload, payload_norm, received_at
+# Columns: id, payload, payload_norm, network_slug, received_at
 # ============================================================
 
 def save_raw_webhook(payload_json: str, network_slug: str) -> int | None:
@@ -100,9 +100,9 @@ def save_raw_webhook(payload_json: str, network_slug: str) -> int | None:
             with conn.cursor() as cur:
                 cur.execute(
                     f"INSERT IGNORE INTO `{table}` "
-                    f"(`payload`, `payload_norm`, `received_at`) "
-                    f"VALUES (%s, %s, NOW())",
-                    (payload_json, payload_norm),
+                    f"(`payload`, `payload_norm`, `network_slug`, `received_at`) "
+                    f"VALUES (%s, %s, %s, NOW())",
+                    (payload_json, payload_norm, network_slug),
                 )
                 conn.commit()
                 if cur.rowcount == 0:

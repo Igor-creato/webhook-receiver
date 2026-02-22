@@ -51,7 +51,7 @@ def save(cfg: dict[str, Any]) -> None:
 
 
 def generate_secret_path() -> str:
-    return secrets.token_urlsafe(24)
+    return secrets.token_urlsafe(32)
 
 
 def get_network(slug: str) -> dict[str, Any] | None:
