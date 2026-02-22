@@ -132,31 +132,44 @@ def get_affiliate_networks() -> list[dict[str, Any]]:
 # Columns: id, payload, payload_norm, network_slug, received_at
 # ============================================================
 
-def save_raw_webhook(payload_json: str, network_slug: str) -> int | None:
+def save_raw_webhook(
+    payload_json: str, network_slug: str, *, _max_retries: int = 3
+) -> int | None:
     """
     Insert into cashback_webhooks with deduplication.
     payload_norm is a VIRTUAL GENERATED column (json_normalize) — DB computes it.
+    UNIQUE KEY on payload_norm handles deduplication via INSERT IGNORE.
     Returns row id or None if duplicate.
+    Retries on deadlock (MySQL error 1213).
     """
     prefix = _prefix()
     table = f"{prefix}cashback_webhooks"
 
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"INSERT IGNORE INTO `{table}` "
-                    f"(`payload`, `network_slug`, `received_at`) "
-                    f"VALUES (%s, %s, NOW())",
-                    (payload_json, network_slug),
-                )
-                conn.commit()
-                if cur.rowcount == 0:
-                    return None  # duplicate
-                return cur.lastrowid
-    except Exception:
-        logger.exception("Failed to save raw webhook")
-        return None
+    for attempt in range(1, _max_retries + 1):
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"INSERT IGNORE INTO `{table}` "
+                        f"(`payload`, `network_slug`, `received_at`) "
+                        f"VALUES (%s, %s, NOW())",
+                        (payload_json, network_slug),
+                    )
+                    conn.commit()
+                    if cur.rowcount == 0:
+                        return None  # duplicate
+                    return cur.lastrowid
+        except pymysql.err.OperationalError as e:
+            if e.args[0] == 1213 and attempt < _max_retries:
+                logger.warning("Deadlock on save_raw_webhook, retry %d/%d", attempt, _max_retries)
+                time.sleep(0.1 * attempt)
+                continue
+            logger.exception("Failed to save raw webhook")
+            return None
+        except Exception:
+            logger.exception("Failed to save raw webhook")
+            return None
+    return None
 
 
 def get_recent_webhooks(limit: int = 50) -> list[dict[str, Any]]:
