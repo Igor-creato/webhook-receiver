@@ -22,6 +22,7 @@ from app.db import (
     check_user_exists,
     insert_transaction,
     update_transaction_status,
+    update_transaction_fields,
 )
 
 logging.basicConfig(
@@ -156,15 +157,18 @@ def process_message(raw_message: str) -> None:
 
     # 7. Check if this is an update to existing transaction
     #    (same uniq_id + partner_name already exists)
-    #    If order_status changed, try update first
+    #    If order_status is completed/declined, try update first
     if mapped["order_status"] in ("completed", "declined"):
-        ok, reason = update_transaction_status(
-            str(uniq_id), mapped["partner_name"], mapped["order_status"]
+        ok, reason = update_transaction_fields(
+            str(uniq_id), mapped["partner_name"],
+            mapped.get("sum_order", ""), mapped.get("comission", ""),
+            mapped["order_status"],
         )
         if ok:
             logger.info(
-                "Updated transaction status: %s/%s -> %s",
+                "Updated transaction: %s/%s -> status=%s, sum=%s, com=%s",
                 mapped["partner_name"], uniq_id, mapped["order_status"],
+                mapped.get("sum_order"), mapped.get("comission"),
             )
             return
 
@@ -185,7 +189,19 @@ def process_message(raw_message: str) -> None:
             target, user_id, uniq_id, mapped["partner_name"], mapped["order_status"],
         )
     elif reason == "duplicate":
-        logger.debug("Duplicate transaction: %s/%s", mapped["partner_name"], uniq_id)
+        ok_upd, _ = update_transaction_fields(
+            str(uniq_id), mapped["partner_name"],
+            mapped.get("sum_order", ""), mapped.get("comission", ""),
+            mapped["order_status"],
+        )
+        if ok_upd:
+            logger.info(
+                "Updated duplicate transaction fields: %s/%s -> status=%s, sum=%s, com=%s",
+                mapped["partner_name"], uniq_id, mapped["order_status"],
+                mapped.get("sum_order"), mapped.get("comission"),
+            )
+        else:
+            logger.debug("Duplicate transaction, no changes: %s/%s", mapped["partner_name"], uniq_id)
     else:
         logger.error("Failed to insert: %s", reason)
 

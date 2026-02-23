@@ -296,3 +296,45 @@ def update_transaction_status(
             logger.warning("Update failed on %s: %s", table, e)
 
     return False, "not_found"
+
+
+def update_transaction_fields(
+    uniq_id: str,
+    partner_name: str,
+    sum_order: Any,
+    comission: Any,
+    order_status: str,
+) -> tuple[bool, str]:
+    """
+    Update sum_order, comission, order_status for an existing transaction.
+    Used when a duplicate webhook arrives with changed field values.
+    Skips records with order_status='balance' (protected state).
+    """
+    prefix = _prefix()
+
+    allowed_statuses = {"waiting", "completed", "declined"}
+    if order_status not in allowed_statuses:
+        return False, f"Invalid status: {order_status}"
+
+    sum_order_val = _coerce_value(sum_order, "sum_order")
+    comission_val = _coerce_value(comission, "comission")
+
+    for tbl_suffix in ("cashback_transactions", "cashback_unregistered_transactions"):
+        table = f"{prefix}{tbl_suffix}"
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"UPDATE `{table}` SET "
+                        f"`sum_order` = %s, `comission` = %s, `order_status` = %s "
+                        f"WHERE `uniq_id` = %s AND `partner` = %s "
+                        f"AND `order_status` NOT IN ('balance')",
+                        (sum_order_val, comission_val, order_status, uniq_id, partner_name),
+                    )
+                    conn.commit()
+                    if cur.rowcount > 0:
+                        return True, "updated"
+        except Exception as e:
+            logger.warning("Update fields failed on %s: %s", table, e)
+
+    return False, "not_found"
