@@ -91,7 +91,7 @@
 <!-- Status Mapping -->
 <div class="card">
     <div class="card-title">🔀 Маппинг статусов</div>
-    <p class="text-muted mb-1">Преобразование статуса заказа из CPA-сети в нашу систему (waiting / completed / declined).</p>
+    <p class="text-muted mb-1">Преобразование статуса заказа из CPA-сети в нашу систему.</p>
 
     <div id="statusContainer">
         {% for s_from, s_to in (network.status_mapping or {}).items() %}
@@ -99,9 +99,9 @@
             <input type="text" name="status_from_{{ loop.index0 }}" value="{{ s_from }}" placeholder="approved">
             <span class="eq">→</span>
             <select name="status_to_{{ loop.index0 }}">
-                <option value="waiting" {% if s_to == 'waiting' %}selected{% endif %}>waiting</option>
-                <option value="completed" {% if s_to == 'completed' %}selected{% endif %}>completed</option>
-                <option value="declined" {% if s_to == 'declined' %}selected{% endif %}>declined</option>
+                {% for status in order_statuses %}
+                <option value="{{ status }}" {% if s_to == status %}selected{% endif %}>{{ status }}</option>
+                {% endfor %}
             </select>
             <button type="button" class="del-btn" onclick="this.parentElement.remove(); reindexStatus();">✕</button>
         </div>
@@ -165,6 +165,7 @@
 let mapIdx = {{ (network.mapping or {}) | length }};
 let statusIdx = {{ (network.status_mapping or {}) | length }};
 let transformIdx = {{ (network.field_transforms or {}) | length }};
+const orderStatuses = {{ order_statuses | tojson }};
 
 // Webhook method validation & hint
 const methodSelect = document.getElementById('webhookMethod');
@@ -207,13 +208,14 @@ function addStatusRow() {
     const container = document.getElementById('statusContainer');
     const row = document.createElement('div');
     row.className = 'mapping-row';
+    const optionsHtml = orderStatuses.map(s =>
+        `<option value="${s}">${s}</option>`
+    ).join('');
     row.innerHTML = `
         <input type="text" name="status_from_${statusIdx}" value="" placeholder="network_status">
         <span class="eq">→</span>
         <select name="status_to_${statusIdx}">
-            <option value="waiting">waiting</option>
-            <option value="completed">completed</option>
-            <option value="declined">declined</option>
+            ${optionsHtml}
         </select>
         <button type="button" class="del-btn" onclick="this.parentElement.remove(); reindexStatus();">✕</button>
     `;

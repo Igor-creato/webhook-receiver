@@ -128,6 +128,57 @@ def get_affiliate_networks() -> list[dict[str, Any]]:
 
 
 # ============================================================
+# Distinct order statuses from transactions
+# ============================================================
+
+_DEFAULT_STATUSES = {"waiting", "completed", "declined"}
+
+# TTL-кэш для валидации в worker (избегаем SELECT на каждый webhook)
+_status_cache: tuple[float, set[str]] = (0.0, set())
+_STATUS_CACHE_TTL = 300  # 5 минут
+
+
+def get_distinct_order_statuses() -> list[str]:
+    """Read allowed order_status values from the ENUM column definition.
+    Falls back to _DEFAULT_STATUSES if schema query fails."""
+    prefix = _prefix()
+    db_cfg = get_db_config()
+    database = db_cfg.get("database", "")
+    table = f"{prefix}cashback_transactions"
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s "
+                    "AND COLUMN_NAME = 'order_status'",
+                    (database, table),
+                )
+                row = cur.fetchone()
+                if row:
+                    # COLUMN_TYPE looks like: enum('waiting','completed','declined','hold','balance')
+                    col_type = row["COLUMN_TYPE"]
+                    # Extract values between quotes
+                    statuses = re.findall(r"'([^']+)'", col_type)
+                    if statuses:
+                        return sorted(statuses)
+    except Exception:
+        logger.warning("Failed to read ENUM values for order_status, using defaults")
+    return sorted(_DEFAULT_STATUSES)
+
+
+def _get_allowed_statuses() -> set[str]:
+    """Return allowed statuses, cached for 5 minutes."""
+    global _status_cache
+    now = time.time()
+    if now - _status_cache[0] < _STATUS_CACHE_TTL and _status_cache[1]:
+        return _status_cache[1]
+    statuses = set(get_distinct_order_statuses())
+    _status_cache = (now, statuses)
+    return statuses
+
+
+# ============================================================
 # cashback_webhooks — raw payload storage
 # Columns: id, payload, payload_hash, network_slug, received_at
 # ============================================================
@@ -274,7 +325,7 @@ def update_transaction_status(
     """Update order_status for existing transaction."""
     prefix = _prefix()
 
-    allowed = {"waiting", "completed", "declined"}
+    allowed = _get_allowed_statuses()
     if new_status not in allowed:
         return False, f"Invalid status: {new_status}"
 
@@ -312,7 +363,7 @@ def update_transaction_fields(
     """
     prefix = _prefix()
 
-    allowed_statuses = {"waiting", "completed", "declined"}
+    allowed_statuses = _get_allowed_statuses()
     if order_status not in allowed_statuses:
         return False, f"Invalid status: {order_status}"
 

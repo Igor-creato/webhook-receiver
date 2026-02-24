@@ -32,7 +32,7 @@ from app.config import (
     DEFAULT_MAPPING,
     DEFAULT_STATUS_MAP,
 )
-from app.db import test_connection, get_affiliate_networks, get_recent_webhooks
+from app.db import test_connection, get_affiliate_networks, get_recent_webhooks, get_distinct_order_statuses
 
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "changeme_on_first_run")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -305,6 +305,8 @@ async def network_edit_page(slug: str, request: Request, whk_session: str | None
     else:
         webhook_url = f"http://localhost:8099/{slug}/{network.get('secret_path', '')}"
 
+    order_statuses = get_distinct_order_statuses()
+
     return templates.TemplateResponse("network_edit.html", {
         "request": request,
         "network": network,
@@ -312,6 +314,7 @@ async def network_edit_page(slug: str, request: Request, whk_session: str | None
         "webhook_url": webhook_url,
         "default_mapping": DEFAULT_MAPPING,
         "default_status_map": DEFAULT_STATUS_MAP,
+        "order_statuses": order_statuses,
     })
 
 
