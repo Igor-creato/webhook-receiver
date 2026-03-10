@@ -1,7 +1,12 @@
 services:
   redis:
-    image: redis:8.4-alpine
+    image: redis:8.6-alpine
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
     volumes:
       - redis_data:/data
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save 60 1000
@@ -11,11 +16,48 @@ services:
       timeout: 3s
       retries: 3
 
-  app:
+  app-receiver:
     build: .
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CONFIG_PATH=/data/config.json
+      - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN}
+      - TZ=Europe/Moscow
+    volumes:
+      - app_data:/data
+    command: python -m uvicorn app.receiver:app --host 0.0.0.0 --port 8099 --workers 4 --log-level warning
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.webhook.entrypoints=websecure
+      - traefik.http.routers.webhook.rule=Host(`${WEBHOOK_DOMAIN}`)
+      - traefik.http.routers.webhook.tls=true
+      - traefik.http.routers.webhook.tls.certresolver=letsencrypt
+      - traefik.http.routers.webhook.service=webhook-svc
+      - traefik.http.services.webhook-svc.loadbalancer.server.port=8099
+    networks:
+      - proxy
+      - default
+      - db-shared
+
+  app-admin:
+    build: .
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
     ports:
-      #      - '8099:8099' # Webhook receiver (public)
       - '127.0.0.1:8098:8098' # Admin UI (localhost only via SSH)
     depends_on:
       redis:
@@ -28,28 +70,19 @@ services:
       - TZ=Europe/Moscow
     volumes:
       - app_data:/data
-    labels:
-      - traefik.enable=true
-      - traefik.docker.network=proxy
-      - traefik.http.routers.webhook.entrypoints=websecure
-      - traefik.http.routers.webhook.rule=Host(`${WEBHOOK_DOMAIN}`)
-      - traefik.http.routers.webhook.tls=true
-      - traefik.http.routers.webhook.tls.certresolver=letsencrypt
-      - traefik.http.routers.webhook.service=webhook-svc
-      - traefik.http.services.webhook-svc.loadbalancer.server.port=8099
-    command: >
-      sh -c "
-        python -m uvicorn app.receiver:app --host 0.0.0.0 --port 8099 --workers 4 --log-level warning &
-        python -m uvicorn admin.panel:app --host 0.0.0.0 --port 8098 --workers 1 --log-level info &
-        wait
-      "
+    command: python -m uvicorn admin.panel:app --host 0.0.0.0 --port 8098 --workers 1 --log-level info
     networks:
-      - proxy
       - default
+      - db-shared
 
   worker:
     build: .
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
     depends_on:
       redis:
         condition: service_healthy
@@ -62,10 +95,12 @@ services:
       - app_data:/data
     command: python -m worker.processor
     networks:
-      - proxy
+      - db-shared
       - default
 networks:
   proxy:
+    external: true
+  db-shared:
     external: true
 
 volumes:
