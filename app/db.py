@@ -452,7 +452,7 @@ def update_transaction_fields(
                             f"UPDATE `{table}` SET "
                             f"`sum_order` = %s, `comission` = %s, `order_status` = %s "
                             f"WHERE `uniq_id` = %s AND `partner` = %s AND `click_id` = %s "
-                            f"AND `order_status` NOT IN ('balance', 'completed', 'declined')",
+                            f"AND `order_status` NOT IN ('balance')",
                             (sum_order_val, comission_val, order_status, uniq_id, partner_name, click_id),
                         )
                     else:
@@ -460,7 +460,7 @@ def update_transaction_fields(
                             f"UPDATE `{table}` SET "
                             f"`sum_order` = %s, `comission` = %s, `order_status` = %s "
                             f"WHERE `uniq_id` = %s AND `partner` = %s "
-                            f"AND `order_status` NOT IN ('balance', 'completed', 'declined')",
+                            f"AND `order_status` NOT IN ('balance')",
                             (sum_order_val, comission_val, order_status, uniq_id, partner_name),
                         )
                     conn.commit()
@@ -470,3 +470,22 @@ def update_transaction_fields(
             logger.warning("Update fields failed on %s: %s", table, e)
 
     return False, "not_found"
+
+
+def transaction_exists(click_id: str) -> bool:
+    """Check if a transaction with this click_id already exists in either transactions table."""
+    prefix = _prefix()
+    for tbl_suffix in ("cashback_transactions", "cashback_unregistered_transactions"):
+        table = f"{prefix}{tbl_suffix}"
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"SELECT 1 FROM `{table}` WHERE `click_id` = %s LIMIT 1",
+                        (click_id,),
+                    )
+                    if cur.fetchone() is not None:
+                        return True
+        except Exception as e:
+            logger.warning("transaction_exists check failed on %s: %s", table, e)
+    return False

@@ -23,8 +23,7 @@ from app.db import (
     check_click_id_and_get_user,
     update_webhook_processing_status,
     insert_transaction,
-    update_transaction_status,
-    update_transaction_fields,
+    transaction_exists,
 )
 
 logging.basicConfig(
@@ -144,23 +143,14 @@ def process_message(raw_message: str) -> None:
     click_id = mapped.get("click_id", "")
     uniq_id = str(mapped.get("uniq_id", ""))
 
-    # 4b. If transaction already exists — update fields and return immediately.
-    #     Skip click_log check: repeat webhooks (status updates) arrive after
-    #     click_log may have been cleaned (90-day TTL), so we must not re-validate.
-    if click_id and uniq_id:
-        ok, reason = update_transaction_fields(
-            uniq_id, mapped["partner_name"],
-            mapped.get("sum_order", ""), mapped.get("comission", ""),
-            mapped["order_status"],
-            click_id=click_id,
+    # 4b. If transaction already exists for this click_id — skip, let API cron handle updates.
+    if click_id and transaction_exists(click_id):
+        update_webhook_processing_status(webhook_id, "ok")
+        logger.info(
+            "Webhook for existing transaction %s/%s, skipping update (handled by API cron)",
+            mapped["partner_name"], uniq_id,
         )
-        if ok:
-            update_webhook_processing_status(webhook_id, "ok")
-            logger.info(
-                "Updated existing transaction: %s/%s -> status=%s",
-                mapped["partner_name"], uniq_id, mapped["order_status"],
-            )
-            return
+        return
 
     # 5. Click-ID security validation (only reached for new transactions).
     # All new transactions must have a click_id present in cashback_click_log.
@@ -232,19 +222,7 @@ def process_message(raw_message: str) -> None:
             target, user_id, uniq_id, mapped["partner_name"], mapped["order_status"],
         )
     elif reason == "duplicate":
-        ok_upd, _ = update_transaction_fields(
-            str(uniq_id), mapped["partner_name"],
-            mapped.get("sum_order", ""), mapped.get("comission", ""),
-            mapped["order_status"],
-        )
-        if ok_upd:
-            logger.info(
-                "Updated duplicate transaction fields: %s/%s -> status=%s, sum=%s, com=%s",
-                mapped["partner_name"], uniq_id, mapped["order_status"],
-                mapped.get("sum_order"), mapped.get("comission"),
-            )
-        else:
-            logger.debug("Duplicate transaction, no changes: %s/%s", mapped["partner_name"], uniq_id)
+        logger.debug("Duplicate transaction, no changes: %s/%s", mapped["partner_name"], uniq_id)
     else:
         logger.error("Failed to insert: %s", reason)
 
