@@ -44,3 +44,17 @@ ALTER TABLE `wp_cashback_webhooks`
 -- 6. Drop payload_norm (no longer needed)
 ALTER TABLE `wp_cashback_webhooks`
     DROP COLUMN `payload_norm`;
+
+-- ============================================================
+-- Migration: Add processing_status to cashback_webhooks
+-- Used by webhook-receiver worker to mark click_id validation result.
+-- Run this ONCE (or re-activate the WordPress plugin).
+-- ============================================================
+
+-- 7. Add processing_status column
+ALTER TABLE `wp_cashback_webhooks`
+    ADD COLUMN IF NOT EXISTS `processing_status`
+        ENUM('ok', 'click_not_found', 'user_mismatch', 'error')
+        DEFAULT NULL
+        AFTER `network_slug`,
+    ADD INDEX IF NOT EXISTS `idx_processing_status` (`processing_status`);

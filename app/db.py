@@ -4,6 +4,7 @@ All queries use parameterized statements (%s placeholders via PyMySQL).
 """
 import hashlib
 import logging
+import random
 import re
 import time
 from contextlib import contextmanager
@@ -31,6 +32,19 @@ _FIELD_TYPES: dict[str, str] = {
     "website_id": "int",
     "sum_order": "decimal",
     "comission": "decimal",
+}
+
+# Максимальная длина строковых полей (символы) — защита от переполнения колонок
+_FIELD_MAX_LEN: dict[str, int] = {
+    "click_id": 255,
+    "uniq_id": 255,
+    "order_number": 255,
+    "offer_name": 512,
+    "action_date": 64,
+    "click_time": 64,
+    "currency": 10,
+    "partner_name": 255,
+    "idempotency_key": 64,
 }
 
 # Дефолтные значения (если значение пустое/отсутствует)
@@ -62,7 +76,12 @@ def _coerce_value(value: Any, field: str) -> Any:
     result = str(value).strip() if value else ""
     if not result and default is not None:
         return default
-    return result or None
+    result = result or None
+    if result is not None:
+        max_len = _FIELD_MAX_LEN.get(field)
+        if max_len and len(result) > max_len:
+            result = result[:max_len]
+    return result
 
 
 def _validate_prefix(prefix: str) -> str:
@@ -213,7 +232,7 @@ def save_raw_webhook(
         except pymysql.err.OperationalError as e:
             if e.args[0] == 1213 and attempt < _max_retries:
                 logger.warning("Deadlock on save_raw_webhook, retry %d/%d", attempt, _max_retries)
-                time.sleep(0.1 * attempt)
+                time.sleep(0.1 * (2 ** attempt) + random.uniform(0, 0.05))
                 continue
             logger.exception("Failed to save raw webhook")
             return None
@@ -221,6 +240,51 @@ def save_raw_webhook(
             logger.exception("Failed to save raw webhook")
             return None
     return None
+
+
+def update_webhook_processing_status(webhook_id: int, status: str) -> None:
+    """Update processing_status in cashback_webhooks after click_id validation."""
+    prefix = _prefix()
+    table = f"{prefix}cashback_webhooks"
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE `{table}` SET `processing_status` = %s WHERE `id` = %s",
+                    (status, webhook_id),
+                )
+                conn.commit()
+    except Exception:
+        logger.exception("Failed to update webhook processing_status id=%s", webhook_id)
+
+
+def check_click_id_and_get_user(click_id: str) -> tuple[bool, int]:
+    """
+    Check if click_id exists in cashback_click_log.
+    Returns (exists, user_id_from_log).
+
+    user_id = 0 means unregistered click — the BIGINT column stores 0 for guests
+    (the plugin sends subid2='unregistered' in the affiliate URL, but click_log
+    stores the integer user_id: 0 for guests, real ID for logged-in users).
+
+    No FK — click_log is cleaned every 90 days. This is a point-in-time check only.
+    """
+    prefix = _prefix()
+    table = f"{prefix}cashback_click_log"
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT `user_id` FROM `{table}` WHERE `click_id` = %s LIMIT 1",
+                    (click_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return False, 0
+                return True, int(row["user_id"] or 0)
+    except Exception:
+        logger.exception("Failed to check click_id %s", click_id)
+        return False, 0
 
 
 def get_recent_webhooks(limit: int = 50) -> list[dict[str, Any]]:
@@ -278,8 +342,13 @@ def insert_transaction(data: dict[str, Any], registered: bool) -> tuple[bool, st
     else:
         table = f"{prefix}cashback_unregistered_transactions"
 
-    # Build idempotency key from uniq_id + partner
-    idemp_src = f"{data.get('uniq_id', '')}_{data.get('partner_name', '')}_{data.get('user_id', '')}"
+    # Build idempotency key from uniq_id + partner + click_id
+    idemp_src = (
+        f"{data.get('uniq_id', '')}_"
+        f"{data.get('partner_name', '')}_"
+        f"{data.get('user_id', '')}_"
+        f"{data.get('click_id', '')}"
+    )
     idempotency_key = hashlib.sha256(idemp_src.encode("utf-8")).hexdigest()
 
     # Build columns and values dynamically from data
@@ -355,11 +424,14 @@ def update_transaction_fields(
     sum_order: Any,
     comission: Any,
     order_status: str,
+    click_id: str = "",
 ) -> tuple[bool, str]:
     """
     Update sum_order, comission, order_status for an existing transaction.
     Used when a duplicate webhook arrives with changed field values.
     Skips records with order_status='balance' (protected state).
+    If click_id is provided, adds it to WHERE to ensure only the transaction
+    tied to that specific click is updated.
     """
     prefix = _prefix()
 
@@ -375,13 +447,22 @@ def update_transaction_fields(
         try:
             with get_conn() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        f"UPDATE `{table}` SET "
-                        f"`sum_order` = %s, `comission` = %s, `order_status` = %s "
-                        f"WHERE `uniq_id` = %s AND `partner` = %s "
-                        f"AND `order_status` NOT IN ('balance')",
-                        (sum_order_val, comission_val, order_status, uniq_id, partner_name),
-                    )
+                    if click_id:
+                        cur.execute(
+                            f"UPDATE `{table}` SET "
+                            f"`sum_order` = %s, `comission` = %s, `order_status` = %s "
+                            f"WHERE `uniq_id` = %s AND `partner` = %s AND `click_id` = %s "
+                            f"AND `order_status` NOT IN ('balance', 'completed', 'declined')",
+                            (sum_order_val, comission_val, order_status, uniq_id, partner_name, click_id),
+                        )
+                    else:
+                        cur.execute(
+                            f"UPDATE `{table}` SET "
+                            f"`sum_order` = %s, `comission` = %s, `order_status` = %s "
+                            f"WHERE `uniq_id` = %s AND `partner` = %s "
+                            f"AND `order_status` NOT IN ('balance', 'completed', 'declined')",
+                            (sum_order_val, comission_val, order_status, uniq_id, partner_name),
+                        )
                     conn.commit()
                     if cur.rowcount > 0:
                         return True, "updated"

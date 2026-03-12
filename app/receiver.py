@@ -6,6 +6,7 @@ Immediately pushes raw data to Redis queue and returns 200.
 import json
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -21,6 +22,16 @@ logger = logging.getLogger("webhook.receiver")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 QUEUE_KEY = "webhook:queue"
 RATE_LIMIT_PREFIX = "webhook:rl:"
+MAX_PAYLOAD_BYTES = 512 * 1024  # 512 KB
+
+# Lua script: atomic INCR + EXPIRE (only sets TTL on first request)
+_RL_LUA = """
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+    redis.call('EXPIRE', KEYS[1], 60)
+end
+return current
+"""
 
 app = FastAPI(
     title="Webhook Receiver",
@@ -55,10 +66,11 @@ async def health():
     return PlainTextResponse("ok")
 
 
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+
+
 def _is_safe_slug(s: str) -> bool:
-    if not s or len(s) > 64:
-        return False
-    return all(c.isalnum() or c in "-_" for c in s)
+    return bool(s and _SLUG_RE.match(s))
 
 
 async def _handle_webhook(slug: str, secret: str, request: Request):
@@ -82,14 +94,17 @@ async def _handle_webhook(slug: str, secret: str, request: Request):
         if request.method != webhook_method:
             return PlainTextResponse("method not allowed", status_code=405)
 
-    # Rate limiting
+    # Reject oversized requests early (before body parsing)
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_PAYLOAD_BYTES:
+        return PlainTextResponse("payload too large", status_code=413)
+
+    # Rate limiting (atomic: INCR + EXPIRE in single Lua script)
     rate_limit = int(network.get("rate_limit", 200))
     r = await get_redis()
     if rate_limit > 0:
         rl_key = f"{RATE_LIMIT_PREFIX}{slug}"
-        current = await r.incr(rl_key)
-        if current == 1:
-            await r.expire(rl_key, 60)
+        current = await r.eval(_RL_LUA, 1, rl_key)
         if current > rate_limit:
             logger.warning("Rate limit exceeded for network %s", slug)
             return PlainTextResponse("rate limited", status_code=429)
@@ -136,6 +151,10 @@ async def _handle_webhook(slug: str, secret: str, request: Request):
         ensure_ascii=False,
         default=str,
     )
+
+    if len(message.encode("utf-8")) > MAX_PAYLOAD_BYTES:
+        logger.warning("Assembled payload exceeds limit for %s", slug)
+        return PlainTextResponse("payload too large", status_code=413)
 
     await r.lpush(QUEUE_KEY, message)
 

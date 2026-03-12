@@ -20,6 +20,8 @@ from app.config import get_network, get_db_config, DEFAULT_STATUS_MAP
 from app.db import (
     save_raw_webhook,
     check_user_exists,
+    check_click_id_and_get_user,
+    update_webhook_processing_status,
     insert_transaction,
     update_transaction_status,
     update_transaction_fields,
@@ -139,15 +141,73 @@ def process_message(raw_message: str) -> None:
     # 4. Set partner_name from network config
     mapped["partner_name"] = network.get("name", slug)
 
-    # 5. Validate required fields
+    click_id = mapped.get("click_id", "")
+    uniq_id = str(mapped.get("uniq_id", ""))
+
+    # 4b. If transaction already exists — update fields and return immediately.
+    #     Skip click_log check: repeat webhooks (status updates) arrive after
+    #     click_log may have been cleaned (90-day TTL), so we must not re-validate.
+    if click_id and uniq_id:
+        ok, reason = update_transaction_fields(
+            uniq_id, mapped["partner_name"],
+            mapped.get("sum_order", ""), mapped.get("comission", ""),
+            mapped["order_status"],
+            click_id=click_id,
+        )
+        if ok:
+            update_webhook_processing_status(webhook_id, "ok")
+            logger.info(
+                "Updated existing transaction: %s/%s -> status=%s",
+                mapped["partner_name"], uniq_id, mapped["order_status"],
+            )
+            return
+
+    # 5. Click-ID security validation (only reached for new transactions).
+    # All new transactions must have a click_id present in cashback_click_log.
+    # No FK — click_log is cleaned every 90 days; this is a point-in-time check.
+    if not click_id:
+        update_webhook_processing_status(webhook_id, "click_not_found")
+        logger.warning(
+            "No click_id in postback for %s, webhook_id=%s — transaction not created",
+            slug, webhook_id,
+        )
+        return
+
+    cl_exists, log_user_id = check_click_id_and_get_user(click_id)
+
+    if not cl_exists:
+        update_webhook_processing_status(webhook_id, "click_not_found")
+        logger.warning(
+            "click_id not found in click_log for %s, webhook_id=%s, click_id=%s",
+            slug, webhook_id, click_id,
+        )
+        return
+
+    # click_id found — verify user_id match.
+    # Normalise postback user_id: 'unregistered' / '' / None → 0 (same as click_log BIGINT 0).
+    try:
+        postback_user_id = int(mapped.get("user_id", 0) or 0)
+    except (ValueError, TypeError):
+        postback_user_id = 0  # 'unregistered' lands here → 0
+
+    if postback_user_id != log_user_id:
+        update_webhook_processing_status(webhook_id, "user_mismatch")
+        logger.warning(
+            "user_id mismatch: click_log=%s, postback=%s, click_id=%s, webhook_id=%s",
+            log_user_id, postback_user_id, click_id, webhook_id,
+        )
+        return  # Do not insert — suspicious click fraud indicator
+    else:
+        update_webhook_processing_status(webhook_id, "ok")
+
+    # 6. Validate required fields
     user_id_raw = mapped.get("user_id", "")
-    uniq_id = mapped.get("uniq_id", "")
 
     if not uniq_id:
         logger.warning("No uniq_id in webhook for %s, webhook_id=%s", slug, webhook_id)
         return
 
-    # 6. Try to parse user_id as int
+    # 7. Try to parse user_id as int
     try:
         user_id = int(user_id_raw) if user_id_raw else 0
     except (ValueError, TypeError):
@@ -155,24 +215,7 @@ def process_message(raw_message: str) -> None:
 
     mapped["user_id"] = user_id if user_id > 0 else user_id_raw
 
-    # 7. Check if this is an update to existing transaction
-    #    (same uniq_id + partner_name already exists)
-    #    If order_status is completed/declined, try update first
-    if mapped["order_status"] in ("completed", "declined"):
-        ok, reason = update_transaction_fields(
-            str(uniq_id), mapped["partner_name"],
-            mapped.get("sum_order", ""), mapped.get("comission", ""),
-            mapped["order_status"],
-        )
-        if ok:
-            logger.info(
-                "Updated transaction: %s/%s -> status=%s, sum=%s, com=%s",
-                mapped["partner_name"], uniq_id, mapped["order_status"],
-                mapped.get("sum_order"), mapped.get("comission"),
-            )
-            return
-
-    # 8. Check if user is registered
+    # 9. Check if user is registered
     registered = False
     if user_id > 0:
         try:
@@ -180,7 +223,7 @@ def process_message(raw_message: str) -> None:
         except Exception:
             registered = False
 
-    # 9. Insert transaction
+    # 10. Insert transaction
     ok, reason = insert_transaction(mapped, registered)
     if ok:
         target = "cashback_transactions" if registered else "cashback_unregistered_transactions"
