@@ -2,6 +2,8 @@ FROM python:3.12-slim
 
 WORKDIR /srv
 
+RUN apt-get update && apt-get install -y --no-install-recommends wget && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir \
     fastapi==0.115.6 \
     uvicorn[standard]==0.34.0 \
