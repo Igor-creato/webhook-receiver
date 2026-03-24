@@ -19,7 +19,7 @@ from typing import Any
 
 import redis
 from fastapi import FastAPI, Form, Request, Response, Cookie
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -427,3 +427,8 @@ async def logs_page(request: Request, whk_session: str | None = Cookie(None)):
     return templates.TemplateResponse("logs.html", {
         "request": request, "webhooks": webhooks, "stats": stats,
     })
+
+
+@app.get("/health")
+async def health():
+    return PlainTextResponse("ok")
