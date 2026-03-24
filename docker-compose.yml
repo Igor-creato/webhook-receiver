@@ -30,7 +30,7 @@ services:
       - internal
       - db-shared
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8099/health || exit 1"]
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:8099/health || exit 1']
       interval: 30s
       timeout: 5s
       retries: 3
@@ -39,6 +39,9 @@ services:
   app-admin:
     image: app-custom:latest
     restart: unless-stopped
+    depends_on:
+      app-receiver:
+        condition: service_started
     logging:
       driver: json-file
       options:
@@ -55,6 +58,12 @@ services:
     volumes:
       - app_data:/data
     command: python -m uvicorn admin.panel:app --host 0.0.0.0 --port 8098 --workers 1 --log-level info
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:8098/health || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
       - internal
       - db-shared
@@ -62,6 +71,9 @@ services:
   worker:
     image: app-custom:latest
     restart: unless-stopped
+    depends_on:
+      app-receiver:
+        condition: service_started
     logging:
       driver: json-file
       options:
@@ -75,6 +87,7 @@ services:
     volumes:
       - app_data:/data
     command: python -m worker.processor
+    stop_grace_period: 30s
     networks:
       - db-shared
       - internal
