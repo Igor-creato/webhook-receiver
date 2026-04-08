@@ -24,7 +24,10 @@ from app.db import (
     update_webhook_processing_status,
     insert_transaction,
     transaction_exists,
+    resolve_partner_token,
+    enqueue_notification,
 )
+from app.email_sender import send_transaction_new
 
 logging.basicConfig(
     level=logging.INFO,
@@ -174,35 +177,41 @@ def process_message(raw_message: str) -> None:
         return
 
     # click_id found — verify user_id match.
-    # Normalise postback user_id: 'unregistered' / '' / None → 0 (same as click_log BIGINT 0).
-    try:
-        postback_user_id = int(mapped.get("user_id", 0) or 0)
-    except (ValueError, TypeError):
-        postback_user_id = 0  # 'unregistered' lands here → 0
+    # Postback user_id may be: numeric "5", partner_token "28732ae1...", "unregistered", or "".
+    user_id_raw = str(mapped.get("user_id", "") or "").strip()
+
+    # Resolve partner_token → numeric user_id (new format since partner_token migration)
+    resolved_from_token = False
+    if user_id_raw and not user_id_raw.isdigit() and user_id_raw.lower() != "unregistered":
+        resolved_user_id = resolve_partner_token(user_id_raw)
+        if resolved_user_id is not None:
+            postback_user_id = resolved_user_id
+            resolved_from_token = True
+        else:
+            postback_user_id = 0  # unknown token → treat as unregistered
+    else:
+        try:
+            postback_user_id = int(user_id_raw) if user_id_raw and user_id_raw.isdigit() else 0
+        except (ValueError, TypeError):
+            postback_user_id = 0
 
     if postback_user_id != log_user_id:
         update_webhook_processing_status(webhook_id, "user_mismatch")
         logger.warning(
-            "user_id mismatch: click_log=%s, postback=%s, click_id=%s, webhook_id=%s",
-            log_user_id, postback_user_id, click_id, webhook_id,
+            "user_id mismatch: click_log=%s, postback=%s (raw=%s), click_id=%s, webhook_id=%s",
+            log_user_id, postback_user_id, user_id_raw, click_id, webhook_id,
         )
         return  # Do not insert — suspicious click fraud indicator
     else:
         update_webhook_processing_status(webhook_id, "ok")
 
     # 6. Validate required fields
-    user_id_raw = mapped.get("user_id", "")
-
     if not uniq_id:
         logger.warning("No uniq_id in webhook for %s, webhook_id=%s", slug, webhook_id)
         return
 
-    # 7. Try to parse user_id as int
-    try:
-        user_id = int(user_id_raw) if user_id_raw else 0
-    except (ValueError, TypeError):
-        user_id = 0
-
+    # 7. Set resolved numeric user_id (partner_token already resolved above)
+    user_id = postback_user_id
     mapped["user_id"] = user_id if user_id > 0 else user_id_raw
 
     # 9. Check if user is registered
@@ -214,13 +223,32 @@ def process_message(raw_message: str) -> None:
             registered = False
 
     # 10. Insert transaction
-    ok, reason = insert_transaction(mapped, registered)
+    ok, reason, insert_id = insert_transaction(mapped, registered)
     if ok:
         target = "cashback_transactions" if registered else "cashback_unregistered_transactions"
         logger.info(
             "Inserted into %s: user=%s, uniq=%s, partner=%s, status=%s",
             target, user_id, uniq_id, mapped["partner_name"], mapped["order_status"],
         )
+
+        # Email notification for registered users
+        if registered and user_id > 0 and insert_id > 0:
+            # Direct SMTP — immediate, no WordPress dependency
+            email_sent = send_transaction_new(
+                user_id=user_id,
+                partner=mapped.get("partner_name", ""),
+                offer_name=mapped.get("offer_name", ""),
+                sum_order=mapped.get("sum_order", 0),
+                order_status=mapped["order_status"],
+            )
+            # Enqueue for audit; if SMTP sent — mark processed to avoid duplicate
+            enqueue_notification(
+                event_type="transaction_new",
+                transaction_id=insert_id,
+                user_id=user_id,
+                new_status=mapped["order_status"],
+                already_sent=email_sent,
+            )
     elif reason == "duplicate":
         logger.debug("Duplicate transaction, no changes: %s/%s", mapped["partner_name"], uniq_id)
     else:

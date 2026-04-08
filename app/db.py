@@ -202,23 +202,58 @@ def _get_allowed_statuses() -> set[str]:
 # Columns: id, payload, payload_hash, network_slug, received_at
 # ============================================================
 
+_RETRYABLE_STATUSES = ("user_mismatch", "click_not_found", "error")
+
+
 def save_raw_webhook(
     payload_json: str, network_slug: str, *, _max_retries: int = 3
 ) -> int | None:
     """
     Insert into cashback_webhooks with deduplication.
-    payload_hash is a STORED GENERATED column (SHA2 of json_normalize) — DB computes it.
+    payload_hash is computed by a BEFORE INSERT trigger (SHA2 of payload).
     UNIQUE KEY on payload_hash handles deduplication via INSERT IGNORE.
-    Returns row id or None if duplicate.
+
+    If a duplicate exists with a failed processing_status (user_mismatch,
+    click_not_found, error), delete the old record and re-insert so the
+    webhook can be reprocessed. Successfully processed webhooks (ok, NULL)
+    are still deduplicated.
+
+    Returns row id or None if duplicate (already processed successfully).
     Retries on deadlock (MySQL error 1213).
     """
     prefix = _prefix()
     table = f"{prefix}cashback_webhooks"
+    payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
     for attempt in range(1, _max_retries + 1):
         try:
             with get_conn() as conn:
                 with conn.cursor() as cur:
+                    # Check if a failed duplicate exists that should be retried
+                    cur.execute(
+                        f"SELECT `id`, `processing_status` FROM `{table}` "
+                        f"WHERE `payload_hash` = %s LIMIT 1",
+                        (payload_hash,),
+                    )
+                    existing = cur.fetchone()
+
+                    if existing is not None:
+                        status = existing.get("processing_status")
+                        if status in _RETRYABLE_STATUSES:
+                            # Delete failed record to allow reprocessing
+                            cur.execute(
+                                f"DELETE FROM `{table}` WHERE `id` = %s",
+                                (existing["id"],),
+                            )
+                            conn.commit()
+                            logger.info(
+                                "Deleted failed webhook id=%s (status=%s) for reprocessing",
+                                existing["id"], status,
+                            )
+                        else:
+                            # Already processed successfully — true duplicate
+                            return None
+
                     cur.execute(
                         f"INSERT IGNORE INTO `{table}` "
                         f"(`payload`, `network_slug`, `received_at`) "
@@ -227,7 +262,7 @@ def save_raw_webhook(
                     )
                     conn.commit()
                     if cur.rowcount == 0:
-                        return None  # duplicate
+                        return None  # race condition: another worker inserted first
                     return cur.lastrowid
         except pymysql.err.OperationalError as e:
             if e.args[0] == 1213 and attempt < _max_retries:
@@ -325,15 +360,46 @@ def check_user_exists(user_id: int) -> bool:
         return False
 
 
+# Regex: ровно 32 hex-символа (lowercase) — формат partner_token
+_PARTNER_TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def resolve_partner_token(token: str) -> int | None:
+    """
+    Resolve partner_token → user_id via cashback_user_profile.
+    Returns user_id (int) or None if token not found.
+    """
+    if not _PARTNER_TOKEN_RE.match(token):
+        return None
+
+    prefix = _prefix()
+    table = f"{prefix}cashback_user_profile"
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT `user_id` FROM `{table}` WHERE `partner_token` = %s LIMIT 1",
+                    (token,),
+                )
+                row = cur.fetchone()
+                if row is not None:
+                    return int(row["user_id"])
+                return None
+    except Exception:
+        logger.exception("Failed to resolve partner_token %s", token)
+        return None
+
+
 # ============================================================
 # cashback_transactions / cashback_unregistered_transactions
 # Matches actual schema with all columns
 # ============================================================
 
-def insert_transaction(data: dict[str, Any], registered: bool) -> tuple[bool, str]:
+def insert_transaction(data: dict[str, Any], registered: bool) -> tuple[bool, str, int]:
     """
     Insert into cashback_transactions or cashback_unregistered_transactions.
     Columns are built dynamically from data keys (driven by network mapping).
+    Returns (success, reason, insert_id).
     """
     prefix = _prefix()
 
@@ -376,16 +442,16 @@ def insert_transaction(data: dict[str, Any], registered: bool) -> tuple[bool, st
             with conn.cursor() as cur:
                 cur.execute(sql, tuple(values))
                 conn.commit()
-                return True, "OK"
+                return True, "OK", cur.lastrowid or 0
     except pymysql.err.IntegrityError as e:
         if e.args[0] == 1062:  # Duplicate entry
-            return False, "duplicate"
+            return False, "duplicate", 0
         if e.args[0] == 1452:  # FK constraint (user doesn't exist)
-            return False, "fk_user_not_found"
-        return False, str(e)
+            return False, "fk_user_not_found", 0
+        return False, str(e), 0
     except Exception as e:
         logger.exception("Failed to insert transaction")
-        return False, str(e)
+        return False, str(e), 0
 
 
 def update_transaction_status(
@@ -470,6 +536,42 @@ def update_transaction_fields(
             logger.warning("Update fields failed on %s: %s", table, e)
 
     return False, "not_found"
+
+
+def enqueue_notification(
+    event_type: str,
+    transaction_id: int,
+    user_id: int,
+    new_status: str,
+    old_status: str | None = None,
+    extra_data: str | None = None,
+    *,
+    already_sent: bool = False,
+) -> None:
+    """
+    Insert a row into cashback_notification_queue for WP Cron email processing.
+    If already_sent=True, marks as processed so WP Cron won't send a duplicate.
+    """
+    if user_id <= 0:
+        return
+    prefix = _prefix()
+    table = f"{prefix}cashback_notification_queue"
+    processed = 1 if already_sent else 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"INSERT INTO `{table}` "
+                    f"(event_type, transaction_id, user_id, old_status, new_status, extra_data, processed) "
+                    f"VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (event_type, transaction_id, user_id, old_status, new_status, extra_data, processed),
+                )
+                conn.commit()
+    except Exception:
+        logger.exception(
+            "Failed to enqueue notification: event=%s, tx=%s, user=%s",
+            event_type, transaction_id, user_id,
+        )
 
 
 def transaction_exists(click_id: str) -> bool:

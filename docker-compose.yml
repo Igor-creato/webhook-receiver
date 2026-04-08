@@ -84,6 +84,9 @@ services:
       - CONFIG_PATH=/data/config.json
       - WORKER_CONCURRENCY=4
       - TZ=Europe/Moscow
+    env_file:
+      # SMTP settings + DOMAIN (shared with WordPress site)
+      - /home/igor/site/.env
     volumes:
       - app_data:/data
     command: python -m worker.processor
