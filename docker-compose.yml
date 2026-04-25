@@ -12,7 +12,7 @@ services:
       - REDIS_URL=redis://redis:6379/1
       - CONFIG_PATH=/data/config.json
       - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN}
-      - TZ=Europe/Moscow
+      - TZ=UTC
     volumes:
       - app_data:/data
     command: python -m uvicorn app.receiver:app --host 0.0.0.0 --port 8099 --workers 2 --log-level warning
@@ -54,7 +54,7 @@ services:
       - CONFIG_PATH=/data/config.json
       - ADMIN_SECRET=${ADMIN_SECRET:-changeme_on_first_run}
       - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN}
-      - TZ=Europe/Moscow
+      - TZ=UTC
     volumes:
       - app_data:/data
     command: python -m uvicorn admin.panel:app --host 0.0.0.0 --port 8098 --workers 1 --log-level info
@@ -83,7 +83,7 @@ services:
       - REDIS_URL=redis://redis:6379/1
       - CONFIG_PATH=/data/config.json
       - WORKER_CONCURRENCY=4
-      - TZ=Europe/Moscow
+      - TZ=UTC
     env_file:
       # SMTP settings + DOMAIN (shared with WordPress site)
       - /home/igor/site/.env

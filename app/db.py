@@ -112,6 +112,7 @@ def get_conn() -> Generator[pymysql.connections.Connection, None, None]:
         read_timeout=10,
         write_timeout=10,
         autocommit=False,
+        init_command="SET time_zone = '+00:00'",
     )
     try:
         yield conn
@@ -257,7 +258,7 @@ def save_raw_webhook(
                     cur.execute(
                         f"INSERT IGNORE INTO `{table}` "
                         f"(`payload`, `network_slug`, `received_at`) "
-                        f"VALUES (%s, %s, NOW())",
+                        f"VALUES (%s, %s, UTC_TIMESTAMP())",
                         (payload_json, network_slug),
                     )
                     conn.commit()
