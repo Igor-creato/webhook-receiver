@@ -1,6 +1,6 @@
 """
 Webhook Receiver.
-Accepts GET/POST on /{slug}/{secret} and /wh/{slug}/{secret}
+Accepts GET/POST on /{slug}/{secret}.
 Immediately pushes raw data to Redis queue and returns 200.
 """
 import json
@@ -13,6 +13,7 @@ from typing import Any
 import redis.asyncio as aioredis
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import get_network
 
@@ -61,6 +62,17 @@ async def shutdown():
         await _redis_pool.close()
 
 
+def _not_found() -> PlainTextResponse:
+    return PlainTextResponse("404 Not Found", status_code=404)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 404:
+        return _not_found()
+    return PlainTextResponse(exc.detail or "", status_code=exc.status_code)
+
+
 @app.get("/health")
 async def health():
     return PlainTextResponse("ok")
@@ -76,17 +88,17 @@ def _is_safe_slug(s: str) -> bool:
 async def _handle_webhook(slug: str, secret: str, request: Request):
     """Main webhook handler."""
     if not _is_safe_slug(slug):
-        return PlainTextResponse("bad request", status_code=400)
+        return _not_found()
 
     network = get_network(slug)
     if network is None:
-        return PlainTextResponse("not found", status_code=404)
+        return _not_found()
 
     if not network.get("is_active", False):
-        return PlainTextResponse("disabled", status_code=403)
+        return _not_found()
 
     if network.get("secret_path", "") != secret:
-        return PlainTextResponse("forbidden", status_code=403)
+        return _not_found()
 
     # Check allowed HTTP method
     webhook_method = network.get("webhook_method", "")
