@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 import redis
+from prometheus_client import Gauge, Counter, start_http_server
 
 from app.config import get_network, get_db_config, DEFAULT_STATUS_MAP
 from app.db import (
@@ -39,7 +40,19 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 QUEUE_KEY = "webhook:queue"
 DLQ_KEY = "webhook:dlq"  # dead letter queue
 CONCURRENCY = int(os.environ.get("WORKER_CONCURRENCY", "4"))
+METRICS_PORT = int(os.environ.get("METRICS_PORT", "9100"))
 SHUTDOWN = threading.Event()
+
+# Prometheus metrics — scraped by VictoriaMetrics на основном стеке
+DLQ_SIZE = Gauge("webhook_dlq_size", "Redis DLQ length")
+QUEUE_SIZE = Gauge("webhook_queue_size", "Redis main queue length")
+LAST_PROCESSED = Gauge(
+    "webhook_last_processed_ts",
+    "Unix timestamp последнего успешно обработанного сообщения",
+)
+PROCESSED_TOTAL = Counter(
+    "webhook_processed_total", "Кол-во обработанных сообщений", ["result"]
+)
 
 
 def get_redis_conn() -> redis.Redis:
@@ -270,8 +283,11 @@ def worker_loop(worker_id: int) -> None:
             _, raw_message = result
             try:
                 process_message(raw_message)
+                LAST_PROCESSED.set(time.time())
+                PROCESSED_TOTAL.labels(result="ok").inc()
             except Exception:
                 logger.exception("Error processing message")
+                PROCESSED_TOTAL.labels(result="error").inc()
                 # Push to dead letter queue
                 try:
                     r.lpush(DLQ_KEY, raw_message)
@@ -298,9 +314,32 @@ def handle_signal(signum, frame):
     SHUTDOWN.set()
 
 
+def metrics_updater_loop() -> None:
+    """Каждые 30 секунд обновляет gauge размеров очередей Redis."""
+    r = get_redis_conn()
+    while not SHUTDOWN.is_set():
+        try:
+            DLQ_SIZE.set(r.llen(DLQ_KEY))
+            QUEUE_SIZE.set(r.llen(QUEUE_KEY))
+        except redis.ConnectionError:
+            try:
+                r = get_redis_conn()
+            except Exception:
+                pass
+        except Exception:
+            logger.exception("metrics updater error")
+        SHUTDOWN.wait(30)
+
+
 def main():
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
+
+    # Стартуем экспозицию /metrics ПЕРЕД consumer-потоками,
+    # чтобы Grafana алерт webhook-stale не паниковал в момент рестарта.
+    LAST_PROCESSED.set(time.time())
+    start_http_server(METRICS_PORT)
+    logger.info("Prometheus metrics on :%d/metrics", METRICS_PORT)
 
     # Wait for DB config
     logger.info("Starting worker with %d threads", CONCURRENCY)
@@ -314,6 +353,11 @@ def main():
         t = threading.Thread(target=worker_loop, args=(i,), daemon=True)
         t.start()
         threads.append(t)
+
+    # Background-поток обновляет метрики DLQ/QUEUE
+    metrics_t = threading.Thread(target=metrics_updater_loop, daemon=True)
+    metrics_t.start()
+    threads.append(metrics_t)
 
     # Wait for shutdown
     while not SHUTDOWN.is_set():

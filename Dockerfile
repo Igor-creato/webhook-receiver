@@ -12,11 +12,12 @@ RUN pip install --no-cache-dir \
     cryptography==44.0.0 \
     jinja2==3.1.5 \
     python-multipart==0.0.20 \
-    httptools==0.6.4
+    httptools==0.6.4 \
+    prometheus_client==0.21.1
 
 COPY . .
 
 ENV PYTHONPATH=/srv
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8098 8099
+EXPOSE 8098 8099 9100

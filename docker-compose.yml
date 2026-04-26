@@ -2,7 +2,10 @@ services:
   app-receiver:
     build: .
     image: app-custom:latest
+    container_name: webhook-receiver
     restart: unless-stopped
+    mem_limit: 384m
+    mem_reservation: 96m
     logging:
       driver: json-file
       options:
@@ -38,7 +41,10 @@ services:
 
   app-admin:
     image: app-custom:latest
+    container_name: webhook-admin
     restart: unless-stopped
+    mem_limit: 192m
+    mem_reservation: 32m
     depends_on:
       app-receiver:
         condition: service_started
@@ -70,7 +76,10 @@ services:
 
   worker:
     image: app-custom:latest
+    container_name: webhook-worker
     restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 128m
     depends_on:
       app-receiver:
         condition: service_started
@@ -91,6 +100,12 @@ services:
       - app_data:/data
     command: python -m worker.processor
     stop_grace_period: 30s
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:9100/metrics || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - db-shared
       - internal
