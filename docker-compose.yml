@@ -95,8 +95,11 @@ services:
       - WORKER_CONCURRENCY=4
       - TZ=UTC
     env_file:
-      # SMTP settings + DOMAIN (shared with WordPress site)
-      - path: ${SMTP_ENV_FILE:-/home/igor/site/.env}
+      # SMTP settings + DOMAIN (shared with WordPress site).
+      # Путь задаётся в .env через SMTP_ENV_FILE (install.sh спросит и пропишет).
+      # Дефолт — гарантированно несуществующий путь: при required:false compose
+      # молча пропустит, не утекая чужой путь, если переменная не задана.
+      - path: ${SMTP_ENV_FILE:-/var/empty/smtp-env-not-configured}
         required: false
     volumes:
       - app_data:/data

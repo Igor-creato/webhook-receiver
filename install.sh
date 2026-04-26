@@ -103,7 +103,37 @@ DB_PREFIX=$(ask "  table prefix" "wp_")
 
 echo
 info "Файл .env с SMTP-настройками (используется worker'ом для писем)"
-SMTP_ENV_FILE=$(ask "  путь (Enter — оставить дефолт; путь может не существовать, он опционален)" "/home/igor/site/.env")
+
+# 1) preset через env-var (например, install-all.sh передаёт SMTP_ENV_FILE=...)
+# 2) иначе — auto-detect соседней папки stack, prompt с дефолтом
+if [[ -n "${SMTP_ENV_FILE:-}" ]]; then
+    info "  preset из окружения: $SMTP_ENV_FILE"
+else
+    PARENT_DIR="$(dirname "$SCRIPT_DIR")"
+    AUTO_STACK=""
+    for candidate in site stack wordpress wp; do
+        if [[ -f "${PARENT_DIR}/${candidate}/docker-compose.yml" ]]; then
+            AUTO_STACK="${PARENT_DIR}/${candidate}"
+            info "  автодетект соседней папки stack: ${AUTO_STACK}"
+            break
+        fi
+    done
+
+    while :; do
+        if [[ -n "$AUTO_STACK" ]]; then
+            STACK_PATH=$(ask "  путь к папке stack (где docker-compose.yml WordPress)" "$AUTO_STACK")
+        else
+            STACK_PATH=$(ask "  путь к папке stack (где docker-compose.yml WordPress)")
+        fi
+        STACK_PATH="${STACK_PATH%/}"
+        if [[ -d "$STACK_PATH" ]]; then
+            SMTP_ENV_FILE="${STACK_PATH}/.env"
+            break
+        fi
+        err "папка не существует: $STACK_PATH"
+    done
+fi
+
 if [[ ! -f "$SMTP_ENV_FILE" ]]; then
     warn "Файл $SMTP_ENV_FILE не найден — worker запустится без SMTP, email-уведомления работать не будут"
 fi
@@ -138,8 +168,10 @@ ok "Образ собран"
 echo
 info "Запись настроек БД в config.json"
 
-# Pass DB credentials via a temporary --env-file (mode 600) to avoid exposing
-# the password on the command line (visible in `ps -ef` / /proc/<pid>/cmdline).
+# Pass DB credentials via the parent shell environment + `-e VAR` (no value) so
+# the password never appears on the command line (`ps -ef` / /proc/<pid>/cmdline).
+# Portable across Docker Compose v2.x and v5.x (where `run --env-file` was
+# renamed to `--env-from-file`).
 TMP_ENV=$(mktemp -p . .db.env.XXXXXX)
 chmod 600 "$TMP_ENV"
 trap 'shred -u "$TMP_ENV" 2>/dev/null || rm -f "$TMP_ENV"' EXIT
@@ -152,8 +184,13 @@ trap 'shred -u "$TMP_ENV" 2>/dev/null || rm -f "$TMP_ENV"' EXIT
     printf '_DB_PREFIX=%s\n' "$DB_PREFIX"
 } > "$TMP_ENV"
 
+set -a
+# shellcheck source=/dev/null
+. "$TMP_ENV"
+set +a
+
 docker compose run --rm --no-deps \
-    --env-file "$TMP_ENV" \
+    -e _DB_HOST -e _DB_PORT -e _DB_USER -e _DB_PASS -e _DB_NAME -e _DB_PREFIX \
     --entrypoint python \
     app-admin -c "
 import os
