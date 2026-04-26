@@ -95,7 +95,8 @@ services:
       - TZ=UTC
     env_file:
       # SMTP settings + DOMAIN (shared with WordPress site)
-      - /home/igor/site/.env
+      - path: ${SMTP_ENV_FILE:-/home/igor/site/.env}
+        required: false
     volumes:
       - app_data:/data
     command: python -m worker.processor

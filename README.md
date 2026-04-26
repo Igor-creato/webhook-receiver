@@ -35,7 +35,31 @@ CPA-сеть → GET/POST /wh/{slug}/{secret}
 
 ## Быстрый старт
 
-### 1. Подготовка
+### Автоматическая установка (рекомендуется)
+
+```bash
+git clone <repo> webhook-receiver
+cd webhook-receiver
+chmod +x install.sh
+./install.sh
+```
+
+Скрипт:
+1. Проверит наличие `docker`, `docker compose`, сетей `proxy` и `db-shared`.
+2. Спросит домен для вебхуков и параметры подключения к БД WordPress.
+3. Сгенерирует пароль админки и запишет в `.env` (chmod 600).
+4. Соберёт образ, инициализирует `config.json` (DB-настройки), поднимет стек.
+
+После установки **примените миграцию БД вручную** (один раз):
+```bash
+mysql -u root -p <db_name> < migration.sql
+```
+
+---
+
+### Ручная установка
+
+#### 1. Подготовка
 
 ```bash
 git clone <repo> webhook-receiver
@@ -46,22 +70,22 @@ cp .env.example .env
 **Отредактируйте `.env`:**
 ```
 ADMIN_SECRET=ваш_надёжный_пароль
+WEBHOOK_DOMAIN=webhook.example.com
 ```
 
-### 2. Миграция БД
+#### 2. Миграция БД
 
-Выполните SQL из `migration.sql` на вашей WordPress базе:
 ```bash
 mysql -u root -p wordpress < migration.sql
 ```
 
-### 3. Запуск
+#### 3. Запуск
 
 ```bash
 docker compose up -d
 ```
 
-### 4. Доступ к админке
+#### 4. Доступ к админке
 
 Админка слушает **только на 127.0.0.1:8098**. Доступ через SSH-туннель:
 
