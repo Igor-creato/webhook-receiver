@@ -34,7 +34,9 @@ from app.config import (
 )
 from app.db import test_connection, get_affiliate_networks, get_recent_webhooks, get_distinct_order_statuses
 
-ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "changeme_on_first_run")
+ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
+if not ADMIN_SECRET or ADMIN_SECRET in ("changeme_on_first_run", "123"):
+    raise SystemExit("ADMIN_SECRET env var must be set to a strong value (run install.sh to generate)")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 SESSION_COOKIE = "whk_session"
 SESSION_TTL = 3600 * 8  # 8 hours
@@ -86,7 +88,7 @@ def _get_queue_stats() -> dict[str, Any]:
 async def root(request: Request, whk_session: str | None = Cookie(None)):
     if _check_auth(whk_session):
         return RedirectResponse("/dashboard", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request, "error": ""})
+    return templates.TemplateResponse(request, "login.html", {"error": ""})
 
 
 @app.post("/login")
@@ -97,7 +99,7 @@ async def login(request: Request, password: str = Form(...)):
         resp = RedirectResponse("/dashboard", status_code=302)
         resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="strict", max_age=SESSION_TTL)
         return resp
-    return templates.TemplateResponse("login.html", {"request": request, "error": "Неверный пароль"})
+    return templates.TemplateResponse(request, "login.html", {"error": "Неверный пароль"})
 
 
 @app.get("/logout")
@@ -138,8 +140,7 @@ async def dashboard(request: Request, whk_session: str | None = Cookie(None)):
     networks = get_all_networks()
     stats = _get_queue_stats()
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", {
         "db_ok": db_ok,
         "db_msg": db_msg,
         "db": cfg["db"],
@@ -159,8 +160,8 @@ async def db_settings_page(request: Request, whk_session: str | None = Cookie(No
     db_ok, db_msg = False, ""
     if cfg["db"].get("host"):
         db_ok, db_msg = test_connection()
-    return templates.TemplateResponse("db_settings.html", {
-        "request": request, "db": cfg["db"], "db_ok": db_ok, "db_msg": db_msg,
+    return templates.TemplateResponse(request, "db_settings.html", {
+        "db": cfg["db"], "db_ok": db_ok, "db_msg": db_msg,
     })
 
 
@@ -183,11 +184,14 @@ async def db_settings_save(
         table_prefix = "wp_"
 
     cfg = load()
+    # Keep existing password when the form field is left empty (it is never
+    # rendered back to the client to avoid leaking it via view-source).
+    new_password = password if password else cfg["db"].get("password", "")
     cfg["db"] = {
         "host": host.strip(),
         "port": port,
         "user": user.strip(),
-        "password": password,
+        "password": new_password,
         "database": database.strip(),
         "table_prefix": table_prefix.strip(),
     }
@@ -218,8 +222,7 @@ async def networks_page(request: Request, whk_session: str | None = Cookie(None)
     except Exception:
         pass
 
-    return templates.TemplateResponse("networks.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "networks.html", {
         "networks": networks,
         "db_networks": db_networks,
     })
@@ -307,8 +310,7 @@ async def network_edit_page(slug: str, request: Request, whk_session: str | None
 
     order_statuses = get_distinct_order_statuses()
 
-    return templates.TemplateResponse("network_edit.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "network_edit.html", {
         "network": network,
         "slug": slug,
         "webhook_url": webhook_url,
@@ -424,8 +426,8 @@ async def logs_page(request: Request, whk_session: str | None = Cookie(None)):
     _require_auth(whk_session)
     webhooks = get_recent_webhooks(100)
     stats = _get_queue_stats()
-    return templates.TemplateResponse("logs.html", {
-        "request": request, "webhooks": webhooks, "stats": stats,
+    return templates.TemplateResponse(request, "logs.html", {
+        "webhooks": webhooks, "stats": stats,
     })
 
 

@@ -29,7 +29,7 @@
         </div>
         <div class="form-row">
             <label>Пароль</label>
-            <input type="password" name="password" value="{{ db.password }}" placeholder="••••••">
+            <input type="password" name="password" value="" placeholder="{% if db.password %}— оставьте пустым, чтобы не менять —{% else %}пароль БД{% endif %}" autocomplete="new-password">
         </div>
         <div class="form-row">
             <label>База данных</label>

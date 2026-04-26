@@ -119,7 +119,8 @@ def process_message(raw_message: str) -> None:
     try:
         msg = json.loads(raw_message)
     except json.JSONDecodeError:
-        logger.error("Invalid JSON in queue: %s", raw_message[:200])
+        # Do not log the message body — it may contain user identifiers / partner tokens.
+        logger.error("Invalid JSON in queue (size=%d bytes)", len(raw_message))
         return
 
     slug = msg.get("slug", "")
@@ -210,9 +211,11 @@ def process_message(raw_message: str) -> None:
 
     if postback_user_id != log_user_id:
         update_webhook_processing_status(webhook_id, "user_mismatch")
+        # Mask raw user_id — when it is a partner_token (~32 hex chars) it can identify the user.
+        raw_masked = user_id_raw if user_id_raw.isdigit() or user_id_raw == "" else f"{user_id_raw[:4]}***"
         logger.warning(
             "user_id mismatch: click_log=%s, postback=%s (raw=%s), click_id=%s, webhook_id=%s",
-            log_user_id, postback_user_id, user_id_raw, click_id, webhook_id,
+            log_user_id, postback_user_id, raw_masked, click_id, webhook_id,
         )
         return  # Do not insert — suspicious click fraud indicator
     else:

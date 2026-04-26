@@ -90,7 +90,7 @@ done
 
 echo
 info "Подключение к MySQL/MariaDB (база WordPress)"
-DB_HOST=$(ask "  host" "mysql")
+DB_HOST=$(ask "  host" "mariadb")
 while :; do
     DB_PORT=$(ask "  port" "3306")
     if [[ "$DB_PORT" =~ ^[0-9]+$ ]] && (( DB_PORT >= 1 && DB_PORT <= 65535 )); then break; fi
@@ -137,13 +137,23 @@ ok "Образ собран"
 # ─── 7. Init config.json in volume ───────────────────────────────────────────
 echo
 info "Запись настроек БД в config.json"
+
+# Pass DB credentials via a temporary --env-file (mode 600) to avoid exposing
+# the password on the command line (visible in `ps -ef` / /proc/<pid>/cmdline).
+TMP_ENV=$(mktemp -p . .db.env.XXXXXX)
+chmod 600 "$TMP_ENV"
+trap 'shred -u "$TMP_ENV" 2>/dev/null || rm -f "$TMP_ENV"' EXIT
+{
+    printf '_DB_HOST=%s\n'   "$DB_HOST"
+    printf '_DB_PORT=%s\n'   "$DB_PORT"
+    printf '_DB_USER=%s\n'   "$DB_USER"
+    printf '_DB_PASS=%s\n'   "$DB_PASS"
+    printf '_DB_NAME=%s\n'   "$DB_NAME"
+    printf '_DB_PREFIX=%s\n' "$DB_PREFIX"
+} > "$TMP_ENV"
+
 docker compose run --rm --no-deps \
-    -e _DB_HOST="$DB_HOST" \
-    -e _DB_PORT="$DB_PORT" \
-    -e _DB_USER="$DB_USER" \
-    -e _DB_PASS="$DB_PASS" \
-    -e _DB_NAME="$DB_NAME" \
-    -e _DB_PREFIX="$DB_PREFIX" \
+    --env-file "$TMP_ENV" \
     --entrypoint python \
     app-admin -c "
 import os

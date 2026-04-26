@@ -18,7 +18,8 @@ services:
       - TZ=UTC
     volumes:
       - app_data:/data
-    command: python -m uvicorn app.receiver:app --host 0.0.0.0 --port 8099 --workers 2 --log-level warning
+    # --no-access-log: webhook URL contains a secret token in the path; access log would leak it.
+    command: python -m uvicorn app.receiver:app --host 0.0.0.0 --port 8099 --workers 2 --log-level warning --no-access-log
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
@@ -58,7 +59,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/1
       - CONFIG_PATH=/data/config.json
-      - ADMIN_SECRET=${ADMIN_SECRET:-changeme_on_first_run}
+      - ADMIN_SECRET=${ADMIN_SECRET:?ADMIN_SECRET must be set in .env (run install.sh to generate)}
       - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN}
       - TZ=UTC
     volumes:
