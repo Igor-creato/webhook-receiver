@@ -409,13 +409,15 @@ def insert_transaction(data: dict[str, Any], registered: bool) -> tuple[bool, st
     else:
         table = f"{prefix}cashback_unregistered_transactions"
 
-    # Build idempotency key from uniq_id + partner + click_id
-    idemp_src = (
-        f"{data.get('uniq_id', '')}_"
-        f"{data.get('partner_name', '')}_"
-        f"{data.get('user_id', '')}_"
-        f"{data.get('click_id', '')}"
-    )
+    # Canonical cross-path idempotency key: sha256( lower(slug) | uniq_id ).
+    # partner_name is already canonicalised to lower(slug) by the worker
+    # (processor.py step 4), and uniq_id is the universal-resolver output —
+    # so the receiver, the plugin cron (insert_missing_transaction) and the
+    # admin manual path all derive the SAME key for the same logical action,
+    # making idx_idempotency_key a real cross-path exactly-once backstop.
+    # user_id / click_id are deliberately EXCLUDED (mutable / attribution —
+    # must not split one action into several idempotency identities).
+    idemp_src = f"{data.get('partner_name', '')}|{data.get('uniq_id', '')}"
     idempotency_key = hashlib.sha256(idemp_src.encode("utf-8")).hexdigest()
 
     # Build columns and values dynamically from data
@@ -575,8 +577,17 @@ def enqueue_notification(
         )
 
 
-def transaction_exists(click_id: str) -> bool:
-    """Check if a transaction with this click_id already exists in either transactions table."""
+def transaction_exists_for_action(uniq_id: str, partner_name: str) -> bool:
+    """True if a transaction for THIS action already exists in either table.
+
+    Identity is (uniq_id, partner) — for Admitad uniq_id == admitad_id/action_id,
+    the per-action system id, matching the DB UNIQUE(uniq_id, partner) constraint.
+    click_id is intentionally NOT used here: one click legitimately maps to many
+    independent actions (Admitad split-order sends one postback per tariff/position,
+    each with its own admitad_id but the same click_id).
+    """
+    if not uniq_id or not partner_name:
+        return False
     prefix = _prefix()
     for tbl_suffix in ("cashback_transactions", "cashback_unregistered_transactions"):
         table = f"{prefix}{tbl_suffix}"
@@ -584,11 +595,14 @@ def transaction_exists(click_id: str) -> bool:
             with get_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        f"SELECT 1 FROM `{table}` WHERE `click_id` = %s LIMIT 1",
-                        (click_id,),
+                        f"SELECT 1 FROM `{table}` "
+                        f"WHERE `uniq_id` = %s AND `partner` = %s LIMIT 1",
+                        (uniq_id, partner_name),
                     )
                     if cur.fetchone() is not None:
                         return True
         except Exception as e:
-            logger.warning("transaction_exists check failed on %s: %s", table, e)
+            logger.warning(
+                "transaction_exists_for_action check failed on %s: %s", table, e
+            )
     return False
