@@ -221,7 +221,13 @@ def process_message(raw_message: str) -> None:
     # let the API cron own status updates. We intentionally do NOT skip when only
     # click_id matches: one click can produce many independent actions (Admitad
     # split-order — one postback per tariff/position, each its own admitad_id).
-    if uniq_id and transaction_exists_for_action(uniq_id, mapped["partner_name"]):
+    # Pass BOTH canonical lower(slug) AND the network display name: pre-cutover
+    # rows used the display name (e.g. 'Admitad') which differs from a slug like
+    # 'adm' even under a case-insensitive collation. Mirrors the cron guard
+    # LOWER(partner) IN (LOWER(slug), LOWER(name)) — UNIQ-001 fintech fix.
+    if uniq_id and transaction_exists_for_action(
+        uniq_id, mapped["partner_name"], network.get("name", slug), slug
+    ):
         update_webhook_processing_status(webhook_id, "ok")
         logger.info(
             "Webhook for existing action %s/%s, skipping update (handled by API cron)",

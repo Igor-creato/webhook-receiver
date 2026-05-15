@@ -577,17 +577,33 @@ def enqueue_notification(
         )
 
 
-def transaction_exists_for_action(uniq_id: str, partner_name: str) -> bool:
+def transaction_exists_for_action(uniq_id: str, *partner_values: str) -> bool:
     """True if a transaction for THIS action already exists in either table.
 
-    Identity is (uniq_id, partner) — for Admitad uniq_id == admitad_id/action_id,
-    the per-action system id, matching the DB UNIQUE(uniq_id, partner) constraint.
-    click_id is intentionally NOT used here: one click legitimately maps to many
-    independent actions (Admitad split-order sends one postback per tariff/position,
-    each with its own admitad_id but the same click_id).
+    Identity is (uniq_id, partner). uniq_id is the per-action system id
+    (Admitad admitad_id/action_id, Advcake id, EPN transactionId, or the
+    universal synthetic id). click_id is intentionally NOT used: one click
+    legitimately maps to many independent actions (split-order).
+
+    partner_values: one or more candidate partner strings. New writes
+    canonicalise partner = lower(slug), but PRE-cutover historical rows were
+    written with the network DISPLAY NAME (e.g. 'Admitad') which is a
+    DIFFERENT string from a slug like 'adm' — a case-insensitive collation
+    cannot equate them. So we mirror the cron reconciliation guard exactly:
+    LOWER(partner) IN (LOWER(slug), LOWER(name)). Without this, a re-postback
+    of a pre-cutover action would miss the legacy row and INSERT a duplicate
+    cashback transaction (UNIQ-001, fintech review 2026-05-15).
     """
-    if not uniq_id or not partner_name:
+    aliases = []
+    seen = set()
+    for v in partner_values:
+        v = (v or "").strip()
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            aliases.append(v)
+    if not uniq_id or not aliases:
         return False
+    placeholders = ", ".join(["LOWER(%s)"] * len(aliases))
     prefix = _prefix()
     for tbl_suffix in ("cashback_transactions", "cashback_unregistered_transactions"):
         table = f"{prefix}{tbl_suffix}"
@@ -596,8 +612,9 @@ def transaction_exists_for_action(uniq_id: str, partner_name: str) -> bool:
                 with conn.cursor() as cur:
                     cur.execute(
                         f"SELECT 1 FROM `{table}` "
-                        f"WHERE `uniq_id` = %s AND `partner` = %s LIMIT 1",
-                        (uniq_id, partner_name),
+                        f"WHERE `uniq_id` = %s "
+                        f"AND LOWER(`partner`) IN ({placeholders}) LIMIT 1",
+                        (uniq_id, *aliases),
                     )
                     if cur.fetchone() is not None:
                         return True
