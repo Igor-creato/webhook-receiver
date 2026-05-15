@@ -24,7 +24,7 @@ from app.db import (
     check_click_id_and_get_user,
     update_webhook_processing_status,
     insert_transaction,
-    transaction_exists,
+    transaction_exists_for_action,
     resolve_partner_token,
     enqueue_notification,
 )
@@ -160,11 +160,14 @@ def process_message(raw_message: str) -> None:
     click_id = mapped.get("click_id", "")
     uniq_id = str(mapped.get("uniq_id", ""))
 
-    # 4b. If transaction already exists for this click_id — skip, let API cron handle updates.
-    if click_id and transaction_exists(click_id):
+    # 4b. If a transaction for THIS action (partner, uniq_id) already exists — skip,
+    # let the API cron own status updates. We intentionally do NOT skip when only
+    # click_id matches: one click can produce many independent actions (Admitad
+    # split-order — one postback per tariff/position, each its own admitad_id).
+    if uniq_id and transaction_exists_for_action(uniq_id, mapped["partner_name"]):
         update_webhook_processing_status(webhook_id, "ok")
         logger.info(
-            "Webhook for existing transaction %s/%s, skipping update (handled by API cron)",
+            "Webhook for existing action %s/%s, skipping update (handled by API cron)",
             mapped["partner_name"], uniq_id,
         )
         return
