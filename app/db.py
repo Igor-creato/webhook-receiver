@@ -409,13 +409,15 @@ def insert_transaction(data: dict[str, Any], registered: bool) -> tuple[bool, st
     else:
         table = f"{prefix}cashback_unregistered_transactions"
 
-    # Build idempotency key from uniq_id + partner + click_id
-    idemp_src = (
-        f"{data.get('uniq_id', '')}_"
-        f"{data.get('partner_name', '')}_"
-        f"{data.get('user_id', '')}_"
-        f"{data.get('click_id', '')}"
-    )
+    # Canonical cross-path idempotency key: sha256( lower(slug) | uniq_id ).
+    # partner_name is already canonicalised to lower(slug) by the worker
+    # (processor.py step 4), and uniq_id is the universal-resolver output —
+    # so the receiver, the plugin cron (insert_missing_transaction) and the
+    # admin manual path all derive the SAME key for the same logical action,
+    # making idx_idempotency_key a real cross-path exactly-once backstop.
+    # user_id / click_id are deliberately EXCLUDED (mutable / attribution —
+    # must not split one action into several idempotency identities).
+    idemp_src = f"{data.get('partner_name', '')}|{data.get('uniq_id', '')}"
     idempotency_key = hashlib.sha256(idemp_src.encode("utf-8")).hexdigest()
 
     # Build columns and values dynamically from data
